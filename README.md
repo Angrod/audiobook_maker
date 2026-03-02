@@ -1,3 +1,5 @@
+A custom Python automation pipeline built on top of GPT-SoVITS and JarodMica's audiobook_maker to parse large text files, manage local AI model execution, and concatenate high-fidelity audiobooks.
+
 # Audiobook Maker v3
 This application utilizes open-source deep-learning text-to-speech and speech-to-speech models to create audiobooks.  The main goal of the project is to be able to seamlessly create high-quality audiobooks by using these advancements in machine learning/AI.
 
@@ -279,4 +281,5 @@ The pretrained model states:
 
 ### F5 TTS
 The pretrained base was trained on the [Emilia dataset](https://huggingface.co/datasets/amphion/Emilia-Dataset), so it is Non-Commerical CC-By-NC-4.0.
+
 
