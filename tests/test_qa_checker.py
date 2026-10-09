@@ -107,6 +107,21 @@ def test_check_clips_flags_reuses_cache_and_unticks_fixed_clips(tmp_path):
     assert results["0"]["passed"] and text_audio_map["0"]["regen"] is False
 
 
+def test_unreadable_clip_is_flagged_without_transcribing(tmp_path):
+    text_audio_map = _make_map(tmp_path, ["A clip that was never written properly."])
+    calls = []
+
+    def transcriber(path, language):
+        calls.append(path)
+        return ""
+
+    # Real soundfile on a zero-byte .wav raises; it must flag the clip instead of aborting the check
+    results = check_clips(text_audio_map, {}, qa_settings_from_global({}), transcriber)
+    assert results["0"]["reasons"] == ["audio file could not be read"]
+    assert text_audio_map["0"]["regen"] is True
+    assert calls == []
+
+
 def test_write_report(tmp_path):
     text_audio_map = _make_map(tmp_path, ["Hello world again and again."])
     results = {"0": {"passed": False, "reasons": ["3 word errors (60%)"], "transcript": "Hello"}}

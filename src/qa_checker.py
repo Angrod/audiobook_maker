@@ -180,8 +180,15 @@ def check_clips(text_audio_map, speakers, settings, transcriber, report_progress
         if entry.get("generated") and path and os.path.exists(path):
             clips.append((idx, entry, path))
 
-    durations = {idx: get_duration(path) for idx, _, path in clips}
-    median_rate = median_chars_per_second([(entry["sentence"], durations[idx]) for idx, entry, _ in clips])
+    durations = {}
+    for idx, _, path in clips:
+        try:
+            durations[idx] = get_duration(path)
+        except Exception as e:
+            print(f"Could not read {path}: {e}")
+            durations[idx] = None
+    median_rate = median_chars_per_second([(entry["sentence"], durations[idx]) for idx, entry, _ in clips
+                                           if durations[idx] is not None])
 
     results = {}
     for count, (idx, entry, path) in enumerate(clips, start=1):
@@ -191,12 +198,16 @@ def check_clips(text_audio_map, speakers, settings, transcriber, report_progress
         cached = entry.get("qa")
         speaker_settings = (speakers.get(entry.get("speaker_id", 1)) or {}).get("settings", {})
         language = language_for_speaker(speaker_settings, settings["qa_language"])
-        if cached and cached.get("mtime") == mtime and cached.get("sentence") == entry["sentence"] and "transcript" in cached:
-            transcript = cached["transcript"]
+        if durations[idx] is None:
+            result = {"passed": False, "error_rate": 1.0, "errors": 0, "duration": 0.0, "transcript": "",
+                      "reasons": ["audio file could not be read"]}
         else:
-            transcript = transcriber(path, language)
-        result = evaluate_clip(entry["sentence"], transcript, durations[idx], language,
-                               median_rate, settings["qa_max_error_rate"])
+            if cached and cached.get("mtime") == mtime and cached.get("sentence") == entry["sentence"] and "transcript" in cached:
+                transcript = cached["transcript"]
+            else:
+                transcript = transcriber(path, language)
+            result = evaluate_clip(entry["sentence"], transcript, durations[idx], language,
+                                   median_rate, settings["qa_max_error_rate"])
         result["mtime"] = mtime
         result["sentence"] = entry["sentence"]
         ticked_by_previous_check = bool(cached and cached.get("ticked_regen"))
