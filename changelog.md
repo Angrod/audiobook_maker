@@ -6,6 +6,11 @@
     - Each new audiobook remembers the settings it was made with (`chunk_settings.json`). Audiobooks created before this version keep the old one-chunk-per-line behaviour so their audio still lines up.
 - GPT-SoVITS: the Speed slider now actually works (it was never passed to the model). Added Repetition Penalty, Internal Text Split, and an opt-in to blend extra reference clips from the voice folder (v1/v2 models).
 - GPT-SoVITS v2Pro and v2ProPlus: added to "Version to Use", and v2Pro-trained models are detected automatically. The submodule now points to Angrod/GPT-SoVITS-Package, which ports v2Pro inference from the official GPT-SoVITS (June 2025). Existing installs: `git submodule sync`, `git submodule update --init modules/GPT-SoVITS-Package`, then reinstall the package.
+### RVC
+- **Tools > Train RVC Voice** trains an RVC voice with Applio without leaving the app: choose recordings, get settings chosen from your GPU and the amount of audio, follow progress, cancel or resume, and get the voice installed with its checkpoints. One-time setup: `install_applio.bat`, or point it at an existing Applio.
+- The RVC panel shows the voice, a **Sound** preset and the pitch; the other six settings are under "Advanced settings". Index Effect now defaults to 0.50 (was 0, which ignored the model's .index).
+- **Preview voice** plays a sentence before and after RVC and suggests a pitch shift.
+- Fixed: uploading an RVC or StyleTTS2 model saved it outside its voice folder, so it never appeared in the list.
 ### Audio check with Whisper
 - Tools > Check Audio with Whisper transcribes every clip and flags ones with repeated/missing/extra words or an unusual length, ticking their Regen? box. Hover a sentence to see what Whisper heard; a full list is written to `qa_report.txt`. Re-running only transcribes clips that changed, and unticks clips it had flagged once they pass. Requires `pip install faster-whisper`.
 ### Export

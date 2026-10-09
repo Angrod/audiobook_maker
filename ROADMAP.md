@@ -18,6 +18,14 @@ The to-do list for this fork. Tick boxes (`- [x]`) as you go so the next session
 - [ ] Set Seed to -1, run **Regenerate in Bulk**, then check again
 - [ ] Note any errors (console output) and whether the flagged clips were real mistakes
 
+### 1b. Try RVC (after step 1 works)
+- [ ] Run `install_applio.bat` once (or choose an existing Applio folder in the training window)
+- [ ] **Tools → Train RVC Voice** with ~10–30 minutes of clean clips (the GPT-SoVITS dataset works)
+- [ ] Note whether the recommended epochs/batch size worked (out-of-memory errors, training time)
+- [ ] Pick the voice, keep Sound on "Natural narration", click **Preview voice** and apply the suggested pitch
+- [ ] If it sounds harsh or metallic, switch to an earlier checkpoint in the training window and preview again
+- [ ] Generate a chapter with **Use s2s Engine** on and run the Whisper check on it
+
 ### 2. Tune settings
 - [ ] Read `qa_report.txt` in the audiobook folder: are the flags real mistakes or false alarms?
 - [ ] Hallucinations still getting through: lower `chunk_max_chars` (try 180) or raise Repetition Penalty
@@ -52,3 +60,6 @@ Settings are in `configs/settings.yaml`; see the table in the [README](README.md
 - [x] Export: skips missing audio, handles mixed sample rates, m4b and loudness options, runs in the background (`b9b865a`)
 - [x] Copied GPT-SoVITS-Package to Angrod and pointed the submodule at it (`30174f6`)
 - [x] v2Pro / v2ProPlus ported into GPT-SoVITS-Package (`6a0fe65`) and enabled in the app (`6304011`)
+- [x] Fixed RVC/StyleTTS2 uploads landing outside their voice folder (`cd35296`)
+- [x] RVC Sound presets and Advanced section (`96cc7a8`), Preview voice with pitch suggestion (`566d9f4`)
+- [x] Tools → Train RVC Voice with Applio, `install_applio.bat` (`98d3b1b`)

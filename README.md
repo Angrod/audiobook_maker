@@ -11,6 +11,7 @@ Built on Audiobook Maker v3.6.4. See [changelog.md](changelog.md) for details an
    pip install faster-whisper
    ```
    The first run downloads the Whisper model (`small` by default, about 500 MB).
+- **RVC without the busywork.** Train a voice inside the app with **Tools > Train RVC Voice**: pick your recordings and it chooses the settings from your GPU and the amount of audio, runs Applio in the background, and installs the voice. The RVC panel now shows only the voice, a **Sound** preset and the pitch, with the rest under "Advanced settings", and **Preview voice** lets you hear a sentence before and after conversion with a suggested pitch shift. See [Training an RVC voice](#training-an-rvc-voice).
 - **Export.** Skips sentences that have no audio yet, handles clips with different sample rates, can write m4b and normalise loudness, and no longer freezes the window.
 
 ### Settings (`configs/settings.yaml`)
@@ -23,6 +24,7 @@ Built on Audiobook Maker v3.6.4. See [changelog.md](changelog.md) for details an
 | `qa_device` | `auto` | `auto`, `cuda` or `cpu` |
 | `qa_language` | `en` | Language for non-GPT-SoVITS speakers (`auto` to detect). GPT-SoVITS speakers use their output language |
 | `qa_max_error_rate` | `0.25` | A clip is flagged above this word error rate (and at least 2 wrong words) |
+| `applio_path` | `modules/Applio` | Applio install used by Tools > Train RVC Voice (`install_applio.bat` puts it here; or choose your own in the window) |
 | `export_format` | `mp3` | `mp3`, `m4b` or `wav` |
 | `export_normalize_loudness` | `false` | Normalise the exported book to -18 LUFS / -3 dBTP (slower) |
 
@@ -259,6 +261,18 @@ If you use it like this, you will only be able to use pyttsx3.  To install addit
    ```
 4. Ensure you have pytorch installed with CUDA enabled [Check Torch Install](#check-torch-install)
 
+### Training an RVC voice
+Needs an NVIDIA GPU (6 GB of VRAM or more) and about 6 GB of disk for Applio.
+1. One time: run `install_applio.bat`. It downloads [Applio](https://github.com/IAHispano/Applio) 3.6.5 into `modules\Applio` and runs Applio's own installer, which gets its own Python, separate from this app's venv. Already have Applio? Skip this and click **Choose Applio folder...** in the training window.
+2. **Tools > Train RVC Voice**: enter a voice name and choose a folder (or one long file) of clean recordings of one speaker. 10 to 30 minutes is ideal; the clips you trained GPT-SoVITS on work well.
+3. Check the recommended settings (worked out from your GPU and the amount of audio) and click **Start training**. You can cancel and resume later; closing the app asks first.
+4. When it finishes, the voice appears in the RVC **Voice Model** list. If it sounds harsh or metallic, pick an earlier checkpoint in the training window and preview again.
+
+### Using an RVC voice
+1. Tick **Use s2s Engine**, choose the **Voice Model**, and leave **Sound** on "Natural narration (recommended)" to start.
+2. Click **Preview voice** to hear a sentence before and after conversion. It suggests a pitch shift when the TTS voice and the RVC voice sit at different pitches; click **Apply** to use it. (For voices you didn't train in the app, choose a short clip of the target speaker once.)
+3. Try the other Sound presets ("Closer to target voice", "Fewer artifacts") or the Advanced settings if needed, previewing as you go.
+
 ### Check Torch Install
 Sometimes, torch may be re-installed from other dependencies, so we want to be sure we're on the right version.
 
@@ -306,6 +320,7 @@ TTS Engines:
 S2S Engines:
 - RVC: https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI
   - Installable RVC Library: https://github.com/daswer123/rvc-python
+  - Training: Applio https://github.com/IAHispano/Applio
 
 Audio check:
 - faster-whisper: https://github.com/SYSTRAN/faster-whisper
