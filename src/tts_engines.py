@@ -371,6 +371,8 @@ def load_with_f5tts(**kwargs):
     )
     return model
 
+GPT_SOVITS_VERSIONS = ["v1", "v2", "v3", "v4", "v2Pro", "v2ProPlus"]
+
 def load_with_gpt_sovits(**kwargs):
     tts_settings = load_tts_config()
     gpt_sovits_engine_config = find_engine_config("gpt_sovits", tts_settings)
@@ -382,11 +384,14 @@ def load_with_gpt_sovits(**kwargs):
         import yaml
         raw_config = yaml.safe_load(f)
         
-    v1_config = raw_config.get('v1', {})
-    v2_config = raw_config.get('v2', {})
-    v3_config = raw_config.get('v3', {})
-    v4_config = raw_config.get('v4', {})
-    TTS_Config.default_configs.update({"v1": v1_config, "v2": v2_config, "v3": v3_config, "v4": v4_config})
+    # Only versions the installed GPT-SoVITS package knows about (v2Pro/v2ProPlus need the Angrod package fork)
+    known_versions = [v for v in GPT_SOVITS_VERSIONS if v in TTS_Config.default_configs]
+    if version and version not in known_versions:
+        raise ValueError(
+            f"GPT-SoVITS version '{version}' is not supported by the installed GPT-SoVITS package. "
+            "Update it with: git submodule sync, git submodule update, then pip install .\\modules\\GPT-SoVITS-Package\\"
+        )
+    TTS_Config.default_configs.update({v: raw_config.get(v, {}) for v in known_versions})
     
     with open("configs/settings.yaml", "r") as f:
         settings = yaml.safe_load(f)
@@ -415,7 +420,7 @@ def load_with_gpt_sovits(**kwargs):
     _, model_version, if_lora_v3 = get_sovits_version_from_path_fast(vits_ckpt_path)
     
     pipeline = TTS(cfg)
-    if model_version in ["v1", "v2"]:
+    if model_version in ["v1", "v2", "v2Pro", "v2ProPlus"]:
         pipeline.init_t2s_weights(t2s_ckpt_path)
         pipeline.init_vits_weights(vits_ckpt_path)
     else: #v3, v4

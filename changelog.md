@@ -5,6 +5,7 @@
 - Text is now split into sentence-based chunks with a maximum length (default 250 characters) instead of one chunk per line, which could send 1,000+ character paragraphs to the model in one go. Sentences are kept whole where possible; overlong ones are split at a comma/semicolon/dash or the space nearest the middle. Settings: Tools > Text Chunking Settings.
     - Each new audiobook remembers the settings it was made with (`chunk_settings.json`). Audiobooks created before this version keep the old one-chunk-per-line behaviour so their audio still lines up.
 - GPT-SoVITS: the Speed slider now actually works (it was never passed to the model). Added Repetition Penalty, Internal Text Split, and an opt-in to blend extra reference clips from the voice folder (v1/v2 models).
+- GPT-SoVITS v2Pro and v2ProPlus: added to "Version to Use", and v2Pro-trained models are detected automatically. The submodule now points to Angrod/GPT-SoVITS-Package, which ports v2Pro inference from the official GPT-SoVITS (June 2025). Existing installs: `git submodule sync`, `git submodule update --init modules/GPT-SoVITS-Package`, then reinstall the package.
 ### Audio check with Whisper
 - Tools > Check Audio with Whisper transcribes every clip and flags ones with repeated/missing/extra words or an unusual length, ticking their Regen? box. Hover a sentence to see what Whisper heard; a full list is written to `qa_report.txt`. Re-running only transcribes clips that changed, and unticks clips it had flagged once they pass. Requires `pip install faster-whisper`.
 ### Export

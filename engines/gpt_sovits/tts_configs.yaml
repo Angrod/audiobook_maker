@@ -38,3 +38,19 @@ v4:
   t2s_weights_path: engines/gpt_sovits/pretrained_models/s1v3.ckpt
   version: v4
   vits_weights_path: engines/gpt_sovits/pretrained_models/gsv-v4-pretrained/s2Gv4.pth
+v2Pro:
+  bert_base_path: engines/gpt_sovits/pretrained_models/chinese-roberta-wwm-ext-large
+  cnhuhbert_base_path: engines/gpt_sovits/pretrained_models/chinese-hubert-base
+  device: cpu
+  is_half: false
+  t2s_weights_path: engines/gpt_sovits/pretrained_models/s1v3.ckpt
+  version: v2Pro
+  vits_weights_path: engines/gpt_sovits/pretrained_models/v2Pro/s2Gv2Pro.pth
+v2ProPlus:
+  bert_base_path: engines/gpt_sovits/pretrained_models/chinese-roberta-wwm-ext-large
+  cnhuhbert_base_path: engines/gpt_sovits/pretrained_models/chinese-hubert-base
+  device: cpu
+  is_half: false
+  t2s_weights_path: engines/gpt_sovits/pretrained_models/s1v3.ckpt
+  version: v2ProPlus
+  vits_weights_path: engines/gpt_sovits/pretrained_models/v2Pro/s2Gv2ProPlus.pth

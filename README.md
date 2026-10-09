@@ -4,6 +4,7 @@ I forked this excellent repository to act as the local AI text-to-speech engine 
 Built on Audiobook Maker v3.6.4. See [changelog.md](changelog.md) for details.
 
 - **Sentence-based chunking with a length cap.** Long lines are split into sentence-sized chunks (default max 250 characters) so the voice model never gets a whole paragraph at once. Change it under **Tools > Text Chunking Settings**. Audiobooks made before this change keep their original one-chunk-per-line splitting.
+- **GPT-SoVITS v2Pro / v2ProPlus.** The GPT-SoVITS submodule now points to [Angrod/GPT-SoVITS-Package](https://github.com/Angrod/GPT-SoVITS-Package), a copy of JarodMica's package with v2Pro/v2ProPlus inference ported from the official GPT-SoVITS. Pick v2Pro or v2ProPlus under "Version to Use", or select your own v2Pro-trained models (they are detected automatically). See [GPT-SoVITS Installation](#gpt-sovits-installation) to update an existing install.
 - **GPT-SoVITS controls.** Speed now works, plus Repetition Penalty (raise it if words loop or repeat), Internal Text Split, and an option to blend extra reference clips: drop extra `.wav` files into `voices/gpt_sovits/<voice>/` next to `<voice>.wav` (v1/v2 models).
 - **Check Audio with Whisper** (**Tools** menu). Transcribes every clip and ticks Regen? on the ones that don't match the text (repeated, missing or invented words, babbling, cut-off audio). Hover a sentence to see what Whisper heard, then use **Regenerate in Bulk** with Seed set to -1 and check again. Only changed clips are re-transcribed. Needs:
    ```
@@ -218,8 +219,10 @@ If you use it like this, you will only be able to use pyttsx3.  To install addit
    ```
    .\venv\Scripts\activate
    ```
-1. Install the GPT-SoVITS-Package submodule:
+1. Install the GPT-SoVITS-Package submodule. If you installed it before (from JarodMica's repo), run the first two commands once so git picks up the new submodule location:
    ```
+   git submodule sync
+   git submodule update --init modules/GPT-SoVITS-Package
    pip install .\modules\GPT-SoVITS-Package\
    ```
 2. Install nltk requirements:
@@ -230,7 +233,8 @@ If you use it like this, you will only be able to use pyttsx3.  To install addit
    ```
    pip install -r requirements.txt
    ```
-4. Inside of , GPT-SoVITS base models will automatically be downloaded when first starting a generation.  Anytime there is a new update to the remote HF repo, it will download new files.  This behavior can be disabled by turning `auto_download_gpt_sovits` inside of `config\setting.yaml` to `False` instead of `True`.
+4. GPT-SoVITS base models will automatically be downloaded when first starting a generation.  Anytime there is a new update to the remote HF repo, it will download new files.  This behavior can be disabled by turning `auto_download_gpt_sovits` inside of `configs\settings.yaml` to `False` instead of `True`.
+   - v2Pro/v2ProPlus also need `sv/pretrained_eres2netv2w24s4ep4.ckpt` (and `v2Pro/s2Gv2Pro.pth` / `v2Pro/s2Gv2ProPlus.pth` for the base models) from https://huggingface.co/lj1995/GPT-SoVITS in `engines\gpt_sovits\pretrained_models`. The automatic download fetches them; if you turned it off, download those files by hand.
 5. Ensure you have pytorch installed with CUDA enabled [Check Torch Install](#check-torch-install)
 
 ## Speech-to-Speech Engines
