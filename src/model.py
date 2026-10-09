@@ -341,13 +341,12 @@ class AudiobookModel:
                 ext = os.path.splitext(source_path)[1]
                 new_name = f"{name}{ext}"
                 if file_to_save['save_format'] == 'folder':
+                    # Engines that use folders (RVC, StyleTTS2, voice references) look for
+                    # <save_path>/<name>/<files>, so models go in the subfolder too
                     if ext in VALID_AUDIO_EXTENSIONS:
                         new_name = f"{name}.wav"
-                        target_path = os.path.join(base_target_path, name, new_name)
-                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                    else:
-                        target_path = os.path.join(base_target_path, new_name)
-                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                    target_path = os.path.join(base_target_path, name, new_name)
+                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
                 else:
                     target_path = os.path.join(base_target_path, new_name)
                 if os.path.exists(target_path):
@@ -363,6 +362,7 @@ class AudiobookModel:
                 target_path = os.path.join(base_target_path, name, f"{name}.txt")
                 if os.path.exists(target_path):
                     raise Exception(f"The file '{target_path}' already exists, please delete it before uploading a new voice.")
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
                 with open(target_path, 'w') as f:
                     f.write(source_text)
     def replace_default_with_none(self, data):
