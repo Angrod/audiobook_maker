@@ -9,10 +9,10 @@
 	url = https://github.com/JarodMica/F5-TTS.git
 [submodule "modules/modules/GPT-SoVITS-Package"]
 	path = modules/modules/GPT-SoVITS-Package
-	url = https://github.com/JarodMica/GPT-SoVITS-Package.git
+	url = https://github.com/Angrod/GPT-SoVITS-Package.git
 [submodule "modules/GPT-SoVITS-Package"]
 	path = modules/GPT-SoVITS-Package
-	url = https://github.com/JarodMica/GPT-SoVITS-Package.git
+	url = https://github.com/Angrod/GPT-SoVITS-Package.git
 [submodule "modules/rvc-python"]
 	path = modules/rvc-python
 	url = https://github.com/JarodMica/rvc-python.git
