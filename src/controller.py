@@ -223,6 +223,7 @@ class AudiobookController:
         self.update_table_with_sentences()
     def connect_signals(self):
         # Connect view signals to controller methods
+        self.view.chunk_settings_changed.connect(self.save_chunk_settings)
         self.view.clear_regen_requested.connect(self.clear_regen_checkboxes)
         self.view.continue_audiobook_generation_requested.connect(self.continue_audiobook_generation)
         self.view.delete_requested.connect(self.deletion_prompt)
@@ -338,6 +339,7 @@ class AudiobookController:
                 self.view.set_audiobook_label("No Audio Book Set")
                 return
         os.makedirs(self.current_audiobook_directory)
+        self.model.save_chunk_settings(self.current_audiobook_directory, self.model.get_chunk_settings())
         # Copy the text file to the audiobook directory
         book_text_file_destination = os.path.join(self.current_audiobook_directory, "book_text.txt")
         original_text_file = os.path.join(self.current_audiobook_directory, "original_text_file.txt")
@@ -415,7 +417,7 @@ class AudiobookController:
             # Attempt to load the text file
             text_file_path = os.path.join(directory_path, "book_text.txt")
             if os.path.exists(text_file_path):
-                sentences = self.model.load_sentences(text_file_path)
+                sentences = self.model.load_sentences(text_file_path, self.model.get_chunk_settings(directory_path))
                 self.model.filepath = text_file_path  # Update the model's filepath
                 # self.model.create_audio_text_map("", sentences)
             else:
@@ -659,6 +661,12 @@ class AudiobookController:
         self.worker.start()
         self.on_generation_started()  # Call this method after starting the worker
 
+    def save_chunk_settings(self, chunk_settings):
+        self.model.save_settings({
+            'chunk_mode': chunk_settings['mode'],
+            'chunk_max_chars': chunk_settings['max_chars'],
+            'chunk_join_wrapped_lines': chunk_settings['join_wrapped_lines'],
+        })
     def save_generation_settings(self):
         self.model.update_speakers(self.view.speakers)
         if self.current_audiobook_directory:
@@ -759,7 +767,7 @@ class AudiobookController:
             else:
                 self.model.text_audio_map.clear()
 
-            sentence_list = self.model.load_sentences(self.model.filepath)
+            sentence_list = self.model.load_sentences(self.model.filepath, self.model.get_chunk_settings(directory_path))
 
             # Update text_audio_map with new sentences
             self.model.update_text_audio_map(sentence_list)
@@ -849,7 +857,7 @@ class AudiobookController:
 
         self.view.clear_table()
         self.model.text_audio_map.clear()
-        sentence_list = self.model.load_sentences(filePath)
+        sentence_list = self.model.load_sentences(filePath, self.model.get_chunk_settings(directory_path))
 
         proceed = self.view.ask_question(
             'Update Existing Audiobook',

@@ -17,6 +17,8 @@ import fnmatch
 import yaml
 import re
 
+import text_chunker
+
 
 from PySide6.QtWidgets import (
     QDialog, QListWidget, QListWidgetItem, QVBoxLayout, QHBoxLayout,
@@ -634,10 +636,74 @@ class WordReplacerView(QMainWindow):
             self.speakers_combo.addItem(f"{speaker['name']}", userData=speaker_id)
         self.speakers_combo.blockSignals(False)
         
+class ChunkSettingsDialog(QDialog):
+    def __init__(self, parent=None, chunk_settings=None):
+        super().__init__(parent)
+        self.setWindowTitle("Text Chunking Settings")
+        self.setModal(True)
+        chunk_settings = text_chunker.normalize_chunk_settings(chunk_settings)
+
+        layout = QVBoxLayout()
+        explanation = QLabel(
+            "Controls how a text file is split into the chunks the voice model reads.\n"
+            "Shorter chunks hallucinate less; whole sentences are kept together when possible.\n\n"
+            "Applies to text files loaded from now on. Existing audiobooks keep the\n"
+            "settings they were created with so their audio still lines up."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Mode:"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("Sentences, packed up to max length", "sentence")
+        self.mode_combo.addItem("One chunk per line (legacy)", "line")
+        self.mode_combo.setCurrentIndex(max(0, self.mode_combo.findData(chunk_settings["mode"])))
+        mode_layout.addWidget(self.mode_combo)
+        layout.addLayout(mode_layout)
+
+        max_layout = QHBoxLayout()
+        max_layout.addWidget(QLabel("Max characters per chunk:"))
+        self.max_chars_spinbox = QSpinBox()
+        self.max_chars_spinbox.setRange(20, 2000)
+        self.max_chars_spinbox.setValue(chunk_settings["max_chars"])
+        max_layout.addWidget(self.max_chars_spinbox)
+        layout.addLayout(max_layout)
+
+        self.join_lines_checkbox = QCheckBox("Join hard-wrapped lines (text where one paragraph spans several lines)")
+        self.join_lines_checkbox.setChecked(chunk_settings["join_wrapped_lines"])
+        layout.addWidget(self.join_lines_checkbox)
+
+        self.mode_combo.currentIndexChanged.connect(self._update_enabled)
+        self._update_enabled()
+
+        button_layout = QHBoxLayout()
+        save_button = QPushButton("Save")
+        cancel_button = QPushButton("Cancel")
+        save_button.clicked.connect(self.accept)
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(save_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+
+    def _update_enabled(self):
+        is_sentence_mode = self.mode_combo.currentData() == "sentence"
+        self.max_chars_spinbox.setEnabled(is_sentence_mode)
+        self.join_lines_checkbox.setEnabled(is_sentence_mode)
+
+    def get_chunk_settings(self):
+        return {
+            "mode": self.mode_combo.currentData(),
+            "max_chars": self.max_chars_spinbox.value(),
+            "join_wrapped_lines": self.join_lines_checkbox.isChecked(),
+        }
+
 class AudiobookMakerView(QMainWindow):
 
     # Define signals for user actions (alphabetical order)
     audio_finished_signal = Signal()
+    chunk_settings_changed = Signal(dict)
     clear_regen_requested = Signal()
     continue_audiobook_generation_requested = Signal()
     # current_speaker_changed = Signal(int)
@@ -785,6 +851,8 @@ class AudiobookMakerView(QMainWindow):
         self.toggle_delete_action.triggered.connect(self.on_toggle_delete_action_triggered)
         self.upload_voices_action = QAction("Upload Models/Voices", self)
         self.upload_voices_action.triggered.connect(self.on_upload_voice_triggered)
+        self.chunk_settings_action = QAction("Text Chunking Settings", self)
+        self.chunk_settings_action.triggered.connect(self.on_chunk_settings_triggered)
         self.word_replacer_action = QAction("Open Word Replacer Window", self)
         self.word_replacer_action.setCheckable(True)
         self.word_replacer_action.setChecked(False)
@@ -940,6 +1008,7 @@ class AudiobookMakerView(QMainWindow):
 
         self.tools_menu.addAction(self.toggle_delete_action)
         self.tools_menu.addAction(self.word_replacer_action)
+        self.tools_menu.addAction(self.chunk_settings_action)
 
         ### Object/widget dependent "sets"
         delegate = MultiLineDelegate(self.tableWidget)
@@ -1561,6 +1630,10 @@ class AudiobookMakerView(QMainWindow):
             self.current_audio_path = None  # Clear current audio path
             self.release_media_player_resources()
             self.audio_finished_signal.emit()  # Emit the signal
+    def on_chunk_settings_triggered(self):
+        dialog = ChunkSettingsDialog(self, text_chunker.chunk_settings_from_global(self.global_settings))
+        if dialog.exec():
+            self.chunk_settings_changed.emit(dialog.get_chunk_settings())
     def on_clear_regen_button_clicked(self):
         self.clear_regen_requested.emit()
     def on_continue_button_clicked(self):

@@ -12,6 +12,7 @@ import yaml
 
 import tts_engines
 import s2s_engines
+import text_chunker
 
 from collections import defaultdict
 from PySide6.QtGui import QColor
@@ -19,6 +20,7 @@ from PySide6.QtCore import Qt
 from subprocess import Popen, PIPE, CalledProcessError
 
 VALID_AUDIO_EXTENSIONS = ['.wav', '.mp3', '.m4a', '.ogg', '.flac']
+CHUNK_SETTINGS_FILE = "chunk_settings.json"
 
 class AudiobookModel:
     def __init__(self, global_settings):
@@ -161,31 +163,6 @@ class AudiobookModel:
         self.execute_subprocess([AudioSegment.silent(0).ffmpeg, '-f', 'concat', '-safe', '0', '-i', file_list_path, new_audiobook_path])
         print(f"Combined audiobook saved in {new_audiobook_name}")
         return new_audiobook_name
-    def filter_paragraph(self, paragraph):
-        sentences = []
-        for line in paragraph.split('\n'):
-            line = line.strip()
-            if line and any(c.isalpha() for c in line):
-                sentences.append(line)
-        return sentences
-    # def filter_paragraph(self, paragraph):
-    #     lines = paragraph.strip().split('\n')
-    #     filtered_list = []
-    #     i = 0
-    #     while i < len(lines):
-    #         split_sentences = lines[i].split('. ')
-    #         for part_sentence in split_sentences:
-    #             if not part_sentence:
-    #                 continue
-    #             line = part_sentence.strip()
-    #             while line.endswith(",") and (i + 1) < len(lines):
-    #                 i += 1
-    #                 line += " " + lines[i].split('. ')[0].strip()
-    #             line = re.sub(r'\[|\]', '', line).strip()
-    #             if line and any(c.isalpha() for c in line):
-    #                 filtered_list.append(line)
-    #         i += 1
-    #     return filtered_list
     def generate_audio_for_sentence_threaded(self, directory_path, is_continue, is_regen_only, report_progress_callback, sentence_generated_callback, should_stop_callback=None):
         self.load_generation_settings(directory_path)
         self.load_text_audio_map(directory_path)
@@ -258,6 +235,17 @@ class AudiobookModel:
             return s2s_audio_path
         else:
             return audio_path
+    def get_chunk_settings(self, directory_path=None):
+        """Chunk settings for an audiobook directory, or the global defaults for a new book."""
+        if directory_path:
+            chunk_settings_path = os.path.join(directory_path, CHUNK_SETTINGS_FILE)
+            if os.path.exists(chunk_settings_path):
+                return text_chunker.normalize_chunk_settings(self.load_json(chunk_settings_path))
+            if os.path.exists(os.path.join(directory_path, "text_audio_map.json")):
+                # Audiobooks made before chunking existed were split one chunk per line;
+                # keep doing that so their sentences still line up with existing audio
+                return text_chunker.normalize_chunk_settings({"mode": "line"})
+        return text_chunker.chunk_settings_from_global(self.global_settings)
     def get_map_keys_and_values(self, idx_str):
         item = self.text_audio_map[idx_str]
         row_position = int(idx_str)
@@ -334,15 +322,12 @@ class AudiobookModel:
             self.current_speaker_id = speaker_id
             self.current_voice_parameters = kwargs
             return self.tts_engine
-    def load_sentences(self, file_path):
+    def load_sentences(self, file_path, chunk_settings=None):
+        if chunk_settings is None:
+            chunk_settings = self.get_chunk_settings()
         with open(file_path, 'r', encoding='utf-8') as file:
             content = file.read()
-            paragraphs = content.split('\n\n')
-            filtered_sentences = []
-            for paragraph in paragraphs:
-                filtered_list = self.filter_paragraph(paragraph)
-                filtered_sentences.extend(filtered_list)
-        return filtered_sentences
+        return text_chunker.chunk_text(content, chunk_settings)
     def load_settings(self):
         if os.path.exists('settings.json'):
             with open('settings.json', 'r') as json_file:
@@ -486,6 +471,9 @@ class AudiobookModel:
             settings_yaml.update(settings_dict)
         with open('configs/settings.yaml', 'w') as f:
             yaml.safe_dump(settings_yaml, f)
+        self.global_settings.update(settings_dict)
+    def save_chunk_settings(self, directory_path, chunk_settings):
+        self.save_json(os.path.join(directory_path, CHUNK_SETTINGS_FILE), chunk_settings)
     def save_generation_settings(self, directory_path, speakers=None):
         generation_settings = {}
         if speakers is None:

@@ -1,5 +1,8 @@
 auto_download_gpt_sovits: true
 background_image: null
+chunk_join_wrapped_lines: false
+chunk_max_chars: 250
+chunk_mode: sentence
 debug_mode: false
 font_size: 14
 version : 3.6.4
