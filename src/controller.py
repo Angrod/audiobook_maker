@@ -121,6 +121,31 @@ class RegenerateAudioWorker(QThread):
 
         self.finished_signal.emit(self.new_audio_path, self.speaker_id)
 
+class QACheckWorker(QThread):
+    progress_signal = Signal(int)
+    result_signal = Signal(object, str)  # results by sentence index, report path
+    error_signal = Signal(str)
+
+    def __init__(self, function, directory_path):
+        super().__init__()
+        self.function = function
+        self.directory_path = directory_path
+        self._stop_requested = False
+
+    def run(self):
+        try:
+            results, report_path = self.function(self.directory_path, self.progress_signal.emit, self.should_stop)
+            self.result_signal.emit(results, report_path)
+        except Exception as e:
+            traceback.print_exc()
+            self.error_signal.emit(str(e))
+
+    def stop(self):
+        self._stop_requested = True
+
+    def should_stop(self):
+        return self._stop_requested
+
 class AudiobookController:
     def __init__(self):
         self.app = QApplication(sys.argv)
@@ -183,6 +208,44 @@ class AudiobookController:
             # Handle the case where the audiobook directory is not set
             pass
 
+    def check_audio_quality(self):
+        if not self.current_audiobook_directory:
+            self.popup_load_audiobook()
+            return
+        if self.is_generating:
+            self.view.show_message("Busy", "Wait for generation to finish (or stop it) before checking audio.", icon=QMessageBox.Warning)
+            return
+        model_size = self.global_settings.get('qa_whisper_model', 'small')
+        proceed = self.view.ask_question(
+            'Check Audio with Whisper',
+            f"Every generated clip will be transcribed with Whisper ('{model_size}') and compared with its text. "
+            "Clips that look wrong (repeated, missing or extra words, babbling or cut off) get their Regen? box ticked "
+            "so you can use 'Regenerate in Bulk'.\n\n"
+            "Clips that have not changed since the last check are not transcribed again. "
+            "The first run downloads the Whisper model.\n\nProceed?",
+            default_button=QMessageBox.Yes
+        )
+        if not proceed:
+            return
+        self.view.stop_audio()
+        self.qa_worker = QACheckWorker(self.model.check_audio_quality_threaded, self.current_audiobook_directory)
+        self.qa_worker.progress_signal.connect(self.view.set_progress)
+        self.qa_worker.result_signal.connect(self.on_audio_quality_checked)
+        self.qa_worker.error_signal.connect(self.on_audio_quality_error)
+        self.qa_worker.finished.connect(self.on_generation_finished)
+        self.qa_worker.start()
+        self.on_generation_started()
+    def on_audio_quality_checked(self, results, report_path):
+        flagged = sum(1 for result in results.values() if not result['passed'])
+        message = f"Checked {len(results)} clips, flagged {flagged}."
+        if flagged:
+            message += ("\n\nFlagged clips have Regen? ticked; hover a sentence to see what Whisper heard. "
+                        "Use 'Regenerate in Bulk' (with Seed set to -1 so you get a new take), then check again: "
+                        "only changed clips are re-transcribed, and clips that now pass are unticked.")
+        message += f"\n\nReport: {report_path}"
+        self.view.show_message("Audio Check Complete", message, icon=QMessageBox.Information)
+    def on_audio_quality_error(self, error_message):
+        self.view.show_message("Audio Check Failed", error_message, icon=QMessageBox.Warning)
     def check_and_reset_for_new_text_file(self, action_description):
         if self.model.filepath or self.model.text_audio_map:
             proceed = self.view.ask_question(
@@ -223,6 +286,7 @@ class AudiobookController:
         self.update_table_with_sentences()
     def connect_signals(self):
         # Connect view signals to controller methods
+        self.view.check_audio_quality_requested.connect(self.check_audio_quality)
         self.view.chunk_settings_changed.connect(self.save_chunk_settings)
         self.view.clear_regen_requested.connect(self.clear_regen_checkboxes)
         self.view.continue_audiobook_generation_requested.connect(self.continue_audiobook_generation)
@@ -836,6 +900,8 @@ class AudiobookController:
     def stop_generation(self):
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.stop()
+        if hasattr(self, 'qa_worker') and self.qa_worker.isRunning():
+            self.qa_worker.stop()
         self.is_generating = False
         self.view.enable_buttons()
         self.view.on_disable_stop_button()
@@ -901,6 +967,12 @@ class AudiobookController:
             sentence, row_position, speaker_id, speaker_name, regen_state = self.model.get_map_keys_and_values(idx_str)
             self.view.add_table_item(row_position, sentence, speaker_name, regen_state)
             self.view.set_row_speaker_color(row_position, speaker_id)
+            qa_result = self.model.text_audio_map[idx_str].get('qa')
+            if qa_result and not qa_result.get('passed', True):
+                self.view.set_sentence_tooltip(
+                    row_position,
+                    f"Audio check: {'; '.join(qa_result.get('reasons', []))}\nWhisper heard: {qa_result.get('transcript', '')}"
+                )
         self.view.resize_table()
     def upload_requested(self, mode, save_items):
         try:

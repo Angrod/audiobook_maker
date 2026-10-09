@@ -703,6 +703,7 @@ class AudiobookMakerView(QMainWindow):
 
     # Define signals for user actions (alphabetical order)
     audio_finished_signal = Signal()
+    check_audio_quality_requested = Signal()
     chunk_settings_changed = Signal(dict)
     clear_regen_requested = Signal()
     continue_audiobook_generation_requested = Signal()
@@ -851,6 +852,8 @@ class AudiobookMakerView(QMainWindow):
         self.toggle_delete_action.triggered.connect(self.on_toggle_delete_action_triggered)
         self.upload_voices_action = QAction("Upload Models/Voices", self)
         self.upload_voices_action.triggered.connect(self.on_upload_voice_triggered)
+        self.check_audio_quality_action = QAction("Check Audio with Whisper", self)
+        self.check_audio_quality_action.triggered.connect(self.check_audio_quality_requested.emit)
         self.chunk_settings_action = QAction("Text Chunking Settings", self)
         self.chunk_settings_action.triggered.connect(self.on_chunk_settings_triggered)
         self.word_replacer_action = QAction("Open Word Replacer Window", self)
@@ -1009,6 +1012,7 @@ class AudiobookMakerView(QMainWindow):
         self.tools_menu.addAction(self.toggle_delete_action)
         self.tools_menu.addAction(self.word_replacer_action)
         self.tools_menu.addAction(self.chunk_settings_action)
+        self.tools_menu.addAction(self.check_audio_quality_action)
 
         ### Object/widget dependent "sets"
         delegate = MultiLineDelegate(self.tableWidget)
@@ -1291,7 +1295,8 @@ class AudiobookMakerView(QMainWindow):
                    self.continue_audiobook_button]
         actions = [self.load_audiobook_action,
                    self.export_audiobook_action,
-                   self.update_audiobook_action]
+                   self.update_audiobook_action,
+                   self.check_audio_quality_action]
 
         for button in buttons:
             button.setDisabled(True)
@@ -1309,7 +1314,8 @@ class AudiobookMakerView(QMainWindow):
                    self.continue_audiobook_button]
         actions = [self.load_audiobook_action,
                    self.export_audiobook_action,
-                   self.update_audiobook_action]
+                   self.update_audiobook_action,
+                   self.check_audio_quality_action]
 
         for button in buttons:
             button.setDisabled(False)
@@ -1894,6 +1900,13 @@ class AudiobookMakerView(QMainWindow):
     def set_tts_engines(self, engines):
         self.tts_engine_combo.clear()
         self.tts_engine_combo.addItems(engines)
+    def set_sentence_tooltip(self, row, text):
+        # Blocked like set_row_speaker_color: itemChanged would otherwise be treated as a sentence edit
+        self.tableWidget.blockSignals(True)
+        item = self.tableWidget.item(row, 0)
+        if item:
+            item.setToolTip(text)
+        self.tableWidget.blockSignals(False)
     def show_message(self, title, message, icon=QMessageBox.Information):
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle(title)

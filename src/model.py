@@ -13,6 +13,7 @@ import yaml
 import tts_engines
 import s2s_engines
 import text_chunker
+import qa_checker
 
 from collections import defaultdict
 from PySide6.QtGui import QColor
@@ -50,6 +51,17 @@ class AudiobookModel:
         idx_str = str(idx)
         if idx_str in self.text_audio_map:
             self.text_audio_map[idx_str]["regen"] = state
+    def check_audio_quality_threaded(self, directory_path, report_progress_callback, should_stop_callback):
+        """Transcribes generated clips with Whisper, ticks Regen? on suspect ones and writes qa_report.txt."""
+        self.load_generation_settings(directory_path)
+        self.load_text_audio_map(directory_path)
+        settings = qa_checker.qa_settings_from_global(self.global_settings)
+        transcriber = qa_checker.WhisperTranscriber(settings["qa_whisper_model"], settings["qa_device"])
+        results = qa_checker.check_clips(self.text_audio_map, self.speakers, settings, transcriber,
+                                         report_progress_callback, should_stop_callback)
+        self.save_text_audio_map(directory_path)
+        report_path = qa_checker.write_report(directory_path, self.text_audio_map, results)
+        return results, report_path
     def clear_background_image(self):
         settings_dict = {"background_image": None}
         self.save_settings(settings_dict) 

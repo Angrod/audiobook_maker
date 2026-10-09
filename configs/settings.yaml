@@ -5,4 +5,8 @@ chunk_max_chars: 250
 chunk_mode: sentence
 debug_mode: false
 font_size: 14
+qa_device: auto
+qa_language: en
+qa_max_error_rate: 0.25
+qa_whisper_model: small
 version : 3.6.4
