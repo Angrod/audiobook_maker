@@ -1,5 +1,20 @@
 # Changelog & thoughts
 
+## v3.7.0 (Angrod fork)
+### Fewer hallucinations
+- Text is now split into sentence-based chunks with a maximum length (default 250 characters) instead of one chunk per line, which could send 1,000+ character paragraphs to the model in one go. Sentences are kept whole where possible; overlong ones are split at a comma/semicolon/dash or the space nearest the middle. Settings: Tools > Text Chunking Settings.
+    - Each new audiobook remembers the settings it was made with (`chunk_settings.json`). Audiobooks created before this version keep the old one-chunk-per-line behaviour so their audio still lines up.
+- GPT-SoVITS: the Speed slider now actually works (it was never passed to the model). Added Repetition Penalty, Internal Text Split, and an opt-in to blend extra reference clips from the voice folder (v1/v2 models).
+### Audio check with Whisper
+- Tools > Check Audio with Whisper transcribes every clip and flags ones with repeated/missing/extra words or an unusual length, ticking their Regen? box. Hover a sentence to see what Whisper heard; a full list is written to `qa_report.txt`. Re-running only transcribes clips that changed, and unticks clips it had flagged once they pass. Requires `pip install faster-whisper`.
+### Export
+- Export no longer fails when some sentences have no audio yet; they are skipped and counted.
+- Clips with different sample rates/formats (e.g. mixing engines) are converted before joining instead of producing garbled audio.
+- New settings `export_format` (mp3, m4b, wav) and `export_normalize_loudness` (-18 LUFS).
+- Export runs in the background so the window doesn't freeze.
+### Fixes
+- Temporary audio files are cleaned up after voice conversion (RVC) or a failed generation.
+
 ## v3.6.4
 - Convert uploaded audio files to .wav for compatibilty
 - Add versioning, the app now has a version number with the title

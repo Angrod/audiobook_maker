@@ -11,4 +11,4 @@ qa_device: auto
 qa_language: en
 qa_max_error_rate: 0.25
 qa_whisper_model: small
-version : 3.6.4
+version : 3.7.0 (fork)

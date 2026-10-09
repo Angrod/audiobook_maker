@@ -1,5 +1,36 @@
 I forked this excellent repository to act as the local AI text-to-speech engine for my personal audiobook generation projects. I am currently using this to manage local Python environments, handle GPT-SoVITS model execution, and process large text files into high-fidelity audio without relying on external cloud APIs. It serves as a great hands-on sandbox for managing AI infrastructure and audio-concatenation pipelines locally.
 
+## What's different in this fork
+Built on Audiobook Maker v3.6.4. See [changelog.md](changelog.md) for details.
+
+- **Sentence-based chunking with a length cap.** Long lines are split into sentence-sized chunks (default max 250 characters) so the voice model never gets a whole paragraph at once. Change it under **Tools > Text Chunking Settings**. Audiobooks made before this change keep their original one-chunk-per-line splitting.
+- **GPT-SoVITS controls.** Speed now works, plus Repetition Penalty (raise it if words loop or repeat), Internal Text Split, and an option to blend extra reference clips: drop extra `.wav` files into `voices/gpt_sovits/<voice>/` next to `<voice>.wav` (v1/v2 models).
+- **Check Audio with Whisper** (**Tools** menu). Transcribes every clip and ticks Regen? on the ones that don't match the text (repeated, missing or invented words, babbling, cut-off audio). Hover a sentence to see what Whisper heard, then use **Regenerate in Bulk** with Seed set to -1 and check again. Only changed clips are re-transcribed. Needs:
+   ```
+   pip install faster-whisper
+   ```
+   The first run downloads the Whisper model (`small` by default, about 500 MB).
+- **Export.** Skips sentences that have no audio yet, handles clips with different sample rates, can write m4b and normalise loudness, and no longer freezes the window.
+
+### Settings (`configs/settings.yaml`)
+| Setting | Default | What it does |
+|---|---|---|
+| `chunk_mode` | `sentence` | `sentence` packs whole sentences up to `chunk_max_chars`; `line` is the old one-chunk-per-line behaviour |
+| `chunk_max_chars` | `250` | Longest chunk sent to the model. Lower it if a voice still hallucinates on long chunks |
+| `chunk_join_wrapped_lines` | `false` | Set `true` for text where one paragraph is wrapped over several lines (e.g. Project Gutenberg) |
+| `qa_whisper_model` | `small` | Whisper size (`base`, `small`, `medium`, `large-v3`, `distil-large-v3`...) or a path to a local model folder |
+| `qa_device` | `auto` | `auto`, `cuda` or `cpu` |
+| `qa_language` | `en` | Language for non-GPT-SoVITS speakers (`auto` to detect). GPT-SoVITS speakers use their output language |
+| `qa_max_error_rate` | `0.25` | A clip is flagged above this word error rate (and at least 2 wrong words) |
+| `export_format` | `mp3` | `mp3`, `m4b` or `wav` |
+| `export_normalize_loudness` | `false` | Normalise the exported book to -18 LUFS / -3 dBTP (slower) |
+
+### Running the tests
+```
+pip install pytest
+python -m pytest tests
+```
+
 # Audiobook Maker v3
 This application utilizes open-source deep-learning text-to-speech and speech-to-speech models to create audiobooks.  The main goal of the project is to be able to seamlessly create high-quality audiobooks by using these advancements in machine learning/AI.
 
@@ -271,6 +302,9 @@ TTS Engines:
 S2S Engines:
 - RVC: https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI
   - Installable RVC Library: https://github.com/daswer123/rvc-python
+
+Audio check:
+- faster-whisper: https://github.com/SYSTRAN/faster-whisper
 
 ## Licensing
 Each engine being used here is MIT or Apache-2.0.  However, base-pretrained models may have their own licenses or use limitations so please be aware of that depending on your use case. I am not a lawyer, so I will just state what the licenses are.
