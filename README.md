@@ -1,7 +1,7 @@
 I forked this excellent repository to act as the local AI text-to-speech engine for my personal audiobook generation projects. I am currently using this to manage local Python environments, handle GPT-SoVITS model execution, and process large text files into high-fidelity audio without relying on external cloud APIs. It serves as a great hands-on sandbox for managing AI infrastructure and audio-concatenation pipelines locally.
 
 ## What's different in this fork
-Built on Audiobook Maker v3.6.4. See [changelog.md](changelog.md) for details.
+Built on Audiobook Maker v3.6.4. See [changelog.md](changelog.md) for details and [ROADMAP.md](ROADMAP.md) for what's next.
 
 - **Sentence-based chunking with a length cap.** Long lines are split into sentence-sized chunks (default max 250 characters) so the voice model never gets a whole paragraph at once. Change it under **Tools > Text Chunking Settings**. Audiobooks made before this change keep their original one-chunk-per-line splitting.
 - **GPT-SoVITS v2Pro / v2ProPlus.** The GPT-SoVITS submodule now points to [Angrod/GPT-SoVITS-Package](https://github.com/Angrod/GPT-SoVITS-Package), a copy of JarodMica's package with v2Pro/v2ProPlus inference ported from the official GPT-SoVITS. Pick v2Pro or v2ProPlus under "Version to Use", or select your own v2Pro-trained models (they are detected automatically). See [GPT-SoVITS Installation](#gpt-sovits-installation) to update an existing install.
