@@ -6,7 +6,6 @@ import shutil
 from pydub import AudioSegment
 import pyttsx3
 import re
-import subprocess
 import tempfile
 import yaml
 
@@ -14,11 +13,11 @@ import tts_engines
 import s2s_engines
 import text_chunker
 import qa_checker
+import audiobook_exporter
 
 from collections import defaultdict
 from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt
-from subprocess import Popen, PIPE, CalledProcessError
 
 VALID_AUDIO_EXTENSIONS = ['.wav', '.mp3', '.m4a', '.ogg', '.flac']
 CHUNK_SETTINGS_FILE = "chunk_settings.json"
@@ -109,72 +108,10 @@ class AudiobookModel:
             "regen" : False
         }
         return text_audio_map
-    def execute_subprocess(self, cmd):
-        with Popen(cmd, stdout=PIPE, bufsize=1, universal_newlines=True) as p:
-            for line in p.stdout:
-                print(line, end='')
-        if p.returncode != 0:
-            raise CalledProcessError(p.returncode, p.args)
     def export_audiobook(self, directory_path, pause_duration):
-        dir_name = os.path.basename(directory_path)
-        idx = 0
-        exported_dir = os.path.join(directory_path, "exported_audiobooks")
-        if not os.path.exists(exported_dir):
-            os.makedirs(exported_dir)
-        audio_map_path = os.path.join(directory_path, 'text_audio_map.json')
-        if not os.path.exists(audio_map_path):
-            raise FileNotFoundError("The selected directory is not a valid Audiobook Directory.")
-        with open(audio_map_path, 'r', encoding='utf-8') as file:
-            text_audio_map = json.load(file)
-        sorted_audio_paths = [text_audio_map[key]['audio_path'] for key in sorted(text_audio_map, key=lambda k: int(k))]
-        def probe_audio_properties(file_path):
-            cmd = [
-                'ffprobe',
-                '-v', 'error',
-                '-select_streams', 'a:0',
-                '-show_entries', 'stream=sample_rate,channels,bits_per_sample',
-                '-of', 'default=noprint_wrappers=1:nokey=1',
-                file_path
-            ]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            if result.returncode != 0:
-                raise RuntimeError(f"ffprobe error: {result.stderr}")
-            lines = result.stdout.strip().split('\n')
-            if len(lines) != 3:
-                raise ValueError("ffprobe did not return sample_rate, channels, and bits_per_sample")
-            sample_rate, channels, bits_per_sample = lines
-            return int(sample_rate), int(channels), int(bits_per_sample)
-        silence_concat_command = ""
-        if pause_duration > 0:
-            pause_length = pause_duration * 1000
-            if not sorted_audio_paths:
-                raise ValueError("No audio files found to determine silence properties.")
-            first_audio_path = sorted_audio_paths[0]
-            sample_rate, channels, bits_per_sample = probe_audio_properties(first_audio_path)
-            silence = AudioSegment.silent(duration=pause_length, frame_rate=sample_rate)
-            silence = silence.set_channels(channels)
-            silence = silence.set_sample_width(bits_per_sample // 8)
-            silence_path = os.path.join(directory_path, "silence.wav")
-            silence.export(silence_path, format="wav")
-            silence_concat_command = f"file '{os.path.basename(silence_path)}'\n"
-        first = True
-        file_list_path = os.path.join(directory_path, 'file_list.txt')
-        with open(file_list_path, 'w') as file:
-            for sap in sorted_audio_paths:
-                if first:
-                    first = False
-                else:
-                    file.write(silence_concat_command)
-                file.write(f"file {os.path.basename(sap)}\n")
-        while True:
-            new_audiobook_name = f"{dir_name}_audiobook_{idx}.mp3"
-            new_audiobook_path = os.path.join(exported_dir, new_audiobook_name)
-            if not os.path.exists(new_audiobook_path):
-                break
-            idx += 1
-        self.execute_subprocess([AudioSegment.silent(0).ffmpeg, '-f', 'concat', '-safe', '0', '-i', file_list_path, new_audiobook_path])
-        print(f"Combined audiobook saved in {new_audiobook_name}")
-        return new_audiobook_name
+        """Returns (output file name, number of sentences skipped because they have no audio)."""
+        settings = audiobook_exporter.export_settings_from_global(self.global_settings)
+        return audiobook_exporter.export_audiobook(directory_path, pause_duration, settings, ffmpeg=AudioSegment.converter)
     def generate_audio_for_sentence_threaded(self, directory_path, is_continue, is_regen_only, report_progress_callback, sentence_generated_callback, should_stop_callback=None):
         self.load_generation_settings(directory_path)
         self.load_text_audio_map(directory_path)
@@ -239,14 +176,24 @@ class AudiobookModel:
             audio_path = tmp_file.name
         success = tts_engines.generate_audio(self.tts_engine, sentence, voice_parameters, tts_engine_name, audio_path)
         if not success:
+            self.remove_temp_file(audio_path)
             return None
         if s2s_validated:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_s2s_file:
                 s2s_audio_path = tmp_s2s_file.name
-            s2s_engines.process_audio(self.s2s_engine, s2s_engine_name=s2s_engine_name, input_audio_path=audio_path, output_audio_path=s2s_audio_path, parameters=voice_parameters)
+            try:
+                s2s_engines.process_audio(self.s2s_engine, s2s_engine_name=s2s_engine_name, input_audio_path=audio_path, output_audio_path=s2s_audio_path, parameters=voice_parameters)
+            finally:
+                self.remove_temp_file(audio_path)
             return s2s_audio_path
         else:
             return audio_path
+    def remove_temp_file(self, path):
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except OSError as e:
+            print(f"Could not remove temporary file {path}: {e}")
     def get_chunk_settings(self, directory_path=None):
         """Chunk settings for an audiobook directory, or the global defaults for a new book."""
         if directory_path:

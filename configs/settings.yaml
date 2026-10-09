@@ -4,6 +4,8 @@ chunk_join_wrapped_lines: false
 chunk_max_chars: 250
 chunk_mode: sentence
 debug_mode: false
+export_format: mp3
+export_normalize_loudness: false
 font_size: 14
 qa_device: auto
 qa_language: en

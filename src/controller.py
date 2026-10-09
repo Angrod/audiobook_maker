@@ -121,6 +121,24 @@ class RegenerateAudioWorker(QThread):
 
         self.finished_signal.emit(self.new_audio_path, self.speaker_id)
 
+class ExportWorker(QThread):
+    result_signal = Signal(str, int)  # output file name, sentences skipped
+    error_signal = Signal(str)
+
+    def __init__(self, function, directory_path, pause_duration):
+        super().__init__()
+        self.function = function
+        self.directory_path = directory_path
+        self.pause_duration = pause_duration
+
+    def run(self):
+        try:
+            output_filename, skipped = self.function(self.directory_path, self.pause_duration)
+            self.result_signal.emit(output_filename, skipped)
+        except Exception as e:
+            traceback.print_exc()
+            self.error_signal.emit(str(e))
+
 class QACheckWorker(QThread):
     progress_signal = Signal(int)
     result_signal = Signal(object, str)  # results by sentence index, report path
@@ -440,11 +458,18 @@ class AudiobookController:
             return  # Exit the function if no directory was selected
 
         pause_duration = self.view.get_pause_between_sentences()
-        try:
-            output_filename = self.model.export_audiobook(directory_path, pause_duration)
-            self.view.show_message("Success", f"Combined audiobook saved as {output_filename}", icon=QMessageBox.Information)
-        except FileNotFoundError as e:
-            self.view.show_message("Error", str(e), icon=QMessageBox.Warning)
+        # Exporting a long book takes a while (especially with loudness normalisation), so keep the GUI responsive
+        self.export_worker = ExportWorker(self.model.export_audiobook, directory_path, pause_duration)
+        self.export_worker.result_signal.connect(self.on_export_finished)
+        self.export_worker.error_signal.connect(lambda error: self.view.show_message("Error", error, icon=QMessageBox.Warning))
+        self.export_worker.finished.connect(self.view.enable_buttons)
+        self.view.disable_buttons()
+        self.export_worker.start()
+    def on_export_finished(self, output_filename, skipped):
+        message = f"Combined audiobook saved as {output_filename}"
+        if skipped:
+            message += f"\n\n{skipped} sentence(s) have no generated audio yet and were left out."
+        self.view.show_message("Success", message, icon=QMessageBox.Information)
     def extract_text(self, idx: int, concat_sentences:bool, length_search_text: int) -> str:
         text = self.model.text_audio_map[str(idx)]['sentence']
         if concat_sentences:
