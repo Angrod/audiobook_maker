@@ -29,7 +29,8 @@ except:
     pass
 
 from model import AudiobookModel
-from view import AudiobookMakerView
+from view import AudiobookMakerView, RVCPreviewDialog
+import voice_tools
 
 
 class AudioGenerationWorker(QThread):
@@ -121,6 +122,23 @@ class RegenerateAudioWorker(QThread):
 
         self.finished_signal.emit(self.new_audio_path, self.speaker_id)
 
+class TaskWorker(QThread):
+    """Runs one function off the GUI thread and reports its return value or error."""
+    result_signal = Signal(object)
+    error_signal = Signal(str)
+
+    def __init__(self, function, *args):
+        super().__init__()
+        self.function = function
+        self.args = args
+
+    def run(self):
+        try:
+            self.result_signal.emit(self.function(*self.args))
+        except Exception as e:
+            traceback.print_exc()
+            self.error_signal.emit(str(e) or e.__class__.__name__)
+
 class ExportWorker(QThread):
     result_signal = Signal(str, int)  # output file name, sentences skipped
     error_signal = Signal(str)
@@ -178,6 +196,8 @@ class AudiobookController:
         self.current_audio_index = 0
         self.current_audiobook_directory = None
         self.is_generating = False
+        self.preview_dialog = None
+        self.preview_result = None
 
         
         self.debug = self.global_settings.get('debug_mode', False)  # Set this to True to enable debugging mode
@@ -264,6 +284,73 @@ class AudiobookController:
         self.view.show_message("Audio Check Complete", message, icon=QMessageBox.Information)
     def on_audio_quality_error(self, error_message):
         self.view.show_message("Audio Check Failed", error_message, icon=QMessageBox.Warning)
+    def open_voice_preview(self):
+        voice = self.view.get_s2s_engine_parameters().get('selected_voice')
+        if not voice:
+            self.view.show_message("No RVC Voice",
+                                   "Choose an RVC voice first. Add one with File > Upload Models/Voices or Tools > Train RVC Voice.",
+                                   icon=QMessageBox.Warning)
+            return
+        first = self.model.text_audio_map.get("0", {}).get("sentence")
+        sentence = first or "The old lighthouse keeper climbed the stairs slowly, counting each step as the storm rolled in."
+        if self.preview_dialog is not None:
+            self.preview_dialog.close()
+        dialog = RVCPreviewDialog(self.view, voice, sentence)
+        dialog.generate_requested.connect(self.generate_voice_preview)
+        dialog.play_requested.connect(self.view.play_audio)
+        # Looked up at click time: the settings panel (and its slider) is rebuilt when speakers change
+        dialog.apply_pitch_requested.connect(self.apply_preview_pitch)
+        dialog.choose_target_clip_requested.connect(self.choose_preview_target_clip)
+        self.preview_dialog = dialog
+        self.preview_result = None
+        dialog.show()
+    def generate_voice_preview(self, sentence):
+        if self.is_generating:
+            self.preview_dialog.show_error("wait for audiobook generation to finish first.")
+            return
+        speaker = self.view.get_current_speaker_attributes()
+        speaker_id = speaker[0] if isinstance(speaker, tuple) else speaker
+        tts_parameters = self.view.get_tts_engine_parameters()
+        s2s_parameters = self.view.get_s2s_engine_parameters()
+        self.view.stop_audio()
+        self.preview_dialog.set_busy("Generating... the first preview loads the voice models, which can take a minute.")
+        self.preview_worker = TaskWorker(self.model.preview_voice, sentence, tts_parameters, s2s_parameters, speaker_id)
+        self.preview_worker.result_signal.connect(self.on_voice_preview_ready)
+        self.preview_worker.error_signal.connect(lambda error: self.preview_dialog and self.preview_dialog.show_error(error))
+        self.preview_worker.start()
+    def apply_preview_pitch(self, semitones):
+        self.view.f0pitch_widget.setValue(semitones)
+        if self.preview_result is not None:
+            self.show_preview_pitch()
+    def on_voice_preview_ready(self, result):
+        self.preview_result = result
+        if self.preview_dialog is None:
+            return
+        self.preview_dialog.show_result(result["original_path"], result["converted_path"])
+        self.show_preview_pitch()
+    def show_preview_pitch(self):
+        result = self.preview_result
+        suggestion = voice_tools.suggest_semitones(result["source_hz"], result["target_hz"])
+        self.preview_dialog.show_pitch(result["source_hz"], result["target_hz"], suggestion, self.view.f0pitch_widget.value())
+    def choose_preview_target_clip(self):
+        clip = self.view.get_open_file_name("Choose a clip of the target voice", "",
+                                            "Audio Files (*.wav *.mp3 *.flac *.ogg *.m4a);;All Files (*)")
+        if not clip or self.preview_result is None:
+            return
+        self.preview_dialog.set_busy("Measuring the target voice's pitch...")
+        self.pitch_worker = TaskWorker(self.model.measure_target_pitch, self.preview_result["voice_dir"], clip)
+        self.pitch_worker.result_signal.connect(self.on_target_pitch_measured)
+        self.pitch_worker.error_signal.connect(lambda error: self.preview_dialog and self.preview_dialog.show_error(error))
+        self.pitch_worker.start()
+    def on_target_pitch_measured(self, target_hz):
+        if self.preview_dialog is None:
+            return
+        self.preview_dialog.show_result(self.preview_result["original_path"], self.preview_result["converted_path"])
+        if not target_hz:
+            self.preview_dialog.show_error("no speech pitch found in that clip; try a clip with clear speech.")
+            return
+        self.preview_result["target_hz"] = target_hz
+        self.show_preview_pitch()
     def check_and_reset_for_new_text_file(self, action_description):
         if self.model.filepath or self.model.text_audio_map:
             proceed = self.view.ask_question(
@@ -305,6 +392,7 @@ class AudiobookController:
     def connect_signals(self):
         # Connect view signals to controller methods
         self.view.check_audio_quality_requested.connect(self.check_audio_quality)
+        self.view.preview_voice_requested.connect(self.open_voice_preview)
         self.view.chunk_settings_changed.connect(self.save_chunk_settings)
         self.view.clear_regen_requested.connect(self.clear_regen_checkboxes)
         self.view.continue_audiobook_generation_requested.connect(self.continue_audiobook_generation)

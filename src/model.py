@@ -14,12 +14,15 @@ import s2s_engines
 import text_chunker
 import qa_checker
 import audiobook_exporter
+import voice_tools
 
 from collections import defaultdict
 from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt
 
 VALID_AUDIO_EXTENSIONS = ['.wav', '.mp3', '.m4a', '.ogg', '.flac']
+RVC_VOICES_DIR = os.path.join("engines", "rvc")
+PREVIEW_DIR = "temp"
 CHUNK_SETTINGS_FILE = "chunk_settings.json"
 
 class AudiobookModel:
@@ -188,6 +191,51 @@ class AudiobookModel:
             return s2s_audio_path
         else:
             return audio_path
+    def preview_voice(self, sentence, tts_parameters, s2s_parameters, speaker_id):
+        """Generates one sentence with the speaker's TTS voice and converts it with RVC.
+
+        TTS and RVC settings are passed separately so changing an RVC setting does not
+        reload the TTS model. Returns paths to both clips plus the pitch suggestion inputs."""
+        import uuid
+        os.makedirs(PREVIEW_DIR, exist_ok=True)
+        for name in os.listdir(PREVIEW_DIR):  # earlier previews; one may still be open in the player
+            if name.startswith("preview_"):
+                self.remove_temp_file(os.path.join(PREVIEW_DIR, name))
+        stem = os.path.join(os.path.abspath(PREVIEW_DIR), f"preview_{uuid.uuid4().hex[:8]}")
+        original_path, converted_path = f"{stem}_original.wav", f"{stem}_rvc.wav"
+
+        tts_engine_name = tts_parameters.get('tts_engine', 'pyttsx3')
+        self.load_selected_tts_engine(tts_engine_name, speaker_id, **tts_parameters)
+        if not tts_engines.generate_audio(self.tts_engine, sentence, tts_parameters, tts_engine_name, original_path) \
+                or not os.path.exists(original_path):
+            raise RuntimeError(f"{tts_engine_name} did not produce any audio for the preview sentence.")
+
+        s2s_engine_name = s2s_parameters.get('s2s_engine', 'RVC')
+        if not self.load_selected_s2s_engine(s2s_engine_name, speaker_id, **s2s_parameters):
+            raise RuntimeError(f"Could not load the {s2s_engine_name} voice; the console has the details.")
+        s2s_engines.process_audio(self.s2s_engine, s2s_engine_name=s2s_engine_name, input_audio_path=original_path,
+                                  output_audio_path=converted_path, parameters=s2s_parameters)
+
+        try:
+            source_hz = voice_tools.median_f0(original_path)
+        except Exception as e:  # librosa missing or unreadable audio: preview still works
+            print(f"Could not measure the TTS voice's pitch: {e}")
+            source_hz = None
+        voice_dir = os.path.join(RVC_VOICES_DIR, s2s_parameters.get('selected_voice') or "")
+        return {
+            "original_path": original_path,
+            "converted_path": converted_path,
+            "source_hz": source_hz,
+            "target_hz": voice_tools.load_voice_info(voice_dir).get("target_median_f0"),
+            "voice_dir": voice_dir,
+        }
+    def measure_target_pitch(self, voice_dir, clip_path):
+        """Saves the typical pitch of a clip of the RVC voice's speaker into its voice_info.json."""
+        target_hz = voice_tools.median_f0(clip_path)
+        if target_hz:
+            voice_tools.save_voice_info(voice_dir, {"target_median_f0": target_hz,
+                                                    "target_pitch_measured_from": os.path.basename(clip_path)})
+        return target_hz
     def remove_temp_file(self, path):
         try:
             if path and os.path.exists(path):

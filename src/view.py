@@ -712,11 +712,108 @@ class ChunkSettingsDialog(QDialog):
             "join_wrapped_lines": self.join_lines_checkbox.isChecked(),
         }
 
+class RVCPreviewDialog(QDialog):
+    """Hear one sentence before and after RVC, and get a pitch shift suggestion."""
+    generate_requested = Signal(str)
+    play_requested = Signal(str)
+    apply_pitch_requested = Signal(int)
+    choose_target_clip_requested = Signal()
+
+    def __init__(self, parent=None, voice_name="", sentence=""):
+        super().__init__(parent)
+        self.setWindowTitle("Preview RVC Voice")
+        self.setModal(False)
+        self.original_path = None
+        self.converted_path = None
+        self.suggestion = None
+
+        layout = QVBoxLayout(self)
+        title = QLabel(f"RVC voice: {voice_name}")
+        title.setStyleSheet("font-weight: bold;")
+        layout.addWidget(title)
+        layout.addWidget(QLabel("Sentence to read (uses this speaker's TTS and RVC settings):"))
+        self.sentence_edit = QPlainTextEdit(sentence)
+        self.sentence_edit.setMaximumHeight(90)
+        layout.addWidget(self.sentence_edit)
+
+        self.generate_button = QPushButton("Generate preview")
+        self.generate_button.clicked.connect(self._on_generate)
+        layout.addWidget(self.generate_button)
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        play_row = QHBoxLayout()
+        self.play_original_button = QPushButton("Play original (TTS)")
+        self.play_converted_button = QPushButton("Play with RVC")
+        for button in (self.play_original_button, self.play_converted_button):
+            button.setEnabled(False)
+            play_row.addWidget(button)
+        self.play_original_button.clicked.connect(lambda: self.play_requested.emit(self.original_path))
+        self.play_converted_button.clicked.connect(lambda: self.play_requested.emit(self.converted_path))
+        layout.addLayout(play_row)
+
+        self.pitch_label = QLabel("")
+        self.pitch_label.setWordWrap(True)
+        layout.addWidget(self.pitch_label)
+        pitch_row = QHBoxLayout()
+        self.apply_pitch_button = QPushButton("")
+        self.apply_pitch_button.clicked.connect(lambda: self.apply_pitch_requested.emit(self.suggestion))
+        self.choose_clip_button = QPushButton("Choose a clip of the target voice...")
+        self.choose_clip_button.clicked.connect(self.choose_target_clip_requested.emit)
+        for button in (self.apply_pitch_button, self.choose_clip_button):
+            button.setVisible(False)
+            pitch_row.addWidget(button)
+        layout.addLayout(pitch_row)
+        self.resize(520, 360)
+
+    def _on_generate(self):
+        sentence = self.sentence_edit.toPlainText().strip()
+        if sentence:
+            self.generate_requested.emit(sentence)
+
+    def set_busy(self, message):
+        self.generate_button.setEnabled(False)
+        self.choose_clip_button.setEnabled(False)
+        self.status_label.setText(message)
+
+    def show_error(self, message):
+        self.generate_button.setEnabled(True)
+        self.choose_clip_button.setEnabled(True)
+        self.status_label.setText(f"Preview failed: {message}")
+
+    def show_result(self, original_path, converted_path):
+        self.original_path, self.converted_path = original_path, converted_path
+        self.generate_button.setEnabled(True)
+        self.play_original_button.setEnabled(True)
+        self.play_converted_button.setEnabled(True)
+        self.status_label.setText("Ready. Compare the two, then adjust the Sound preset or pitch and generate again.")
+
+    def show_pitch(self, source_hz, target_hz, suggestion, current_pitch):
+        self.suggestion = suggestion
+        self.choose_clip_button.setEnabled(True)
+        self.choose_clip_button.setVisible(source_hz is not None and target_hz is None)
+        self.apply_pitch_button.setVisible(suggestion is not None and suggestion != current_pitch)
+        if source_hz is None:
+            self.pitch_label.setText("Pitch suggestion unavailable: no speech pitch could be measured in the TTS clip.")
+        elif target_hz is None:
+            self.pitch_label.setText(
+                f"TTS voice: about {source_hz:.0f} Hz. To suggest a pitch shift, the app also needs the RVC voice's "
+                "normal pitch. Voices trained with Tools > Train RVC Voice have it; for this voice, choose a "
+                "5 to 30 second clip of the target speaker.")
+        else:
+            self.pitch_label.setText(
+                f"TTS voice: about {source_hz:.0f} Hz. RVC voice: about {target_hz:.0f} Hz. "
+                f"Suggested pitch shift: {suggestion:+d} semitones (currently {current_pitch:+d}).")
+            self.apply_pitch_button.setText(f"Apply {suggestion:+d}")
+
+
 class AudiobookMakerView(QMainWindow):
 
     # Define signals for user actions (alphabetical order)
     audio_finished_signal = Signal()
     check_audio_quality_requested = Signal()
+    preview_voice_requested = Signal()
     chunk_settings_changed = Signal(dict)
     clear_regen_requested = Signal()
     continue_audiobook_generation_requested = Signal()
@@ -2119,6 +2216,11 @@ class AudiobookMakerView(QMainWindow):
             widget_layout = self.create_widget_for_parameter(param)
             if widget_layout:
                 self.s2s_options_layout.addLayout(widget_layout)
+
+        preview_button = QPushButton("Preview voice")
+        preview_button.setToolTip("Hear a sentence before and after conversion, and get a pitch suggestion")
+        preview_button.clicked.connect(self.preview_voice_requested.emit)
+        self.s2s_options_layout.addWidget(preview_button)
 
         advanced_params = [p for p in params if p.get('advanced')]
         if advanced_params:
