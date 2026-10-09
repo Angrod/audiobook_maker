@@ -19,6 +19,7 @@ import yaml
 import re
 
 import text_chunker
+import rvc_training
 
 
 from PySide6.QtWidgets import (
@@ -808,12 +809,272 @@ class RVCPreviewDialog(QDialog):
             self.apply_pitch_button.setText(f"Apply {suggestion:+d}")
 
 
+class RVCTrainDialog(QDialog):
+    """Tools > Train RVC Voice: pick a dataset, get settings chosen for you, train with Applio."""
+    choose_applio_requested = Signal()
+    dataset_selected = Signal(str)
+    start_requested = Signal(str, str, dict, bool)  # voice name, dataset path, settings, resume
+    cancel_requested = Signal()
+    use_checkpoint_requested = Signal(str, str)  # voice folder, checkpoint file name
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Train RVC Voice")
+        self.setModal(False)
+        self.gpu = None
+        self.summary = None
+        self.voice_dir = None
+        self.applio_ready = False
+        self.applio_path = None
+        layout = QVBoxLayout(self)
+
+        # 1. Applio
+        self.applio_label = QLabel("")
+        self.applio_label.setWordWrap(True)
+        applio_row = QHBoxLayout()
+        applio_row.addWidget(self.applio_label, 1)
+        choose_applio = QPushButton("Choose Applio folder...")
+        choose_applio.clicked.connect(self.choose_applio_requested.emit)
+        applio_row.addWidget(choose_applio)
+        layout.addLayout(applio_row)
+
+        # 2. Voice and dataset
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("Voice name:"))
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("e.g. Narrator_Matt")
+        self.name_edit.textChanged.connect(self._refresh)
+        name_row.addWidget(self.name_edit, 1)
+        layout.addLayout(name_row)
+
+        dataset_row = QHBoxLayout()
+        dataset_row.addWidget(QLabel("Recordings:"))
+        self.dataset_edit = QLineEdit()
+        self.dataset_edit.setReadOnly(True)
+        dataset_row.addWidget(self.dataset_edit, 1)
+        folder_button = QPushButton("Choose folder...")
+        folder_button.clicked.connect(lambda: self._choose_dataset(folder=True))
+        file_button = QPushButton("Choose file...")
+        file_button.clicked.connect(lambda: self._choose_dataset(folder=False))
+        dataset_row.addWidget(folder_button)
+        dataset_row.addWidget(file_button)
+        layout.addLayout(dataset_row)
+        hint = QLabel("Clean speech from one person (wav, mp3, flac or ogg). 10 to 30 minutes is ideal. "
+                      "The clips you trained GPT-SoVITS on work well.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        self.noise_checkbox = QCheckBox("The recordings have background noise (apply noise reduction)")
+        self.noise_checkbox.toggled.connect(self._recommend)
+        layout.addWidget(self.noise_checkbox)
+
+        # 3. Settings, chosen automatically
+        self.settings_label = QLabel("Choose recordings to see the recommended settings.")
+        self.settings_label.setWordWrap(True)
+        layout.addWidget(self.settings_label)
+        self.warning_label = QLabel("")
+        self.warning_label.setWordWrap(True)
+        self.warning_label.setStyleSheet("color: #b45309;")
+        layout.addWidget(self.warning_label)
+
+        self.advanced_toggle = QToolButton()
+        self.advanced_toggle.setText("Advanced settings")
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.advanced_toggle.setArrowType(Qt.RightArrow)
+        layout.addWidget(self.advanced_toggle)
+        self.advanced_widget = QWidget()
+        advanced = QGridLayout(self.advanced_widget)
+        advanced.setContentsMargins(0, 0, 0, 0)
+        self.epochs_spin = self._spin(10, 2000)
+        self.batch_spin = self._spin(1, 50)
+        self.save_every_spin = self._spin(1, 100)
+        for row, (label, widget) in enumerate([("Epochs", self.epochs_spin), ("Batch size", self.batch_spin),
+                                               ("Save a checkpoint every N epochs", self.save_every_spin)]):
+            advanced.addWidget(QLabel(label + ":"), row, 0)
+            advanced.addWidget(widget, row, 1)
+        fixed = QLabel(f"Fixed so the app can play the voice: {rvc_training.SAMPLE_RATE // 1000} kHz, "
+                       f"{rvc_training.F0_METHOD} pitch, {rvc_training.VOCODER} vocoder, {rvc_training.EMBEDDER} features.")
+        fixed.setWordWrap(True)
+        advanced.addWidget(fixed, 3, 0, 1, 2)
+        self.advanced_widget.setVisible(False)
+        self.advanced_toggle.toggled.connect(self._toggle_advanced)
+        layout.addWidget(self.advanced_widget)
+
+        # 4. Train
+        buttons = QHBoxLayout()
+        self.start_button = QPushButton("Start training")
+        self.start_button.clicked.connect(lambda: self._start(resume=False))
+        self.resume_button = QPushButton("Resume previous run")
+        self.resume_button.clicked.connect(lambda: self._start(resume=True))
+        self.resume_button.setVisible(False)
+        self.cancel_button = QPushButton("Cancel training")
+        self.cancel_button.clicked.connect(self.cancel_requested.emit)
+        self.cancel_button.setEnabled(False)
+        for button in (self.start_button, self.resume_button, self.cancel_button):
+            buttons.addWidget(button)
+        layout.addLayout(buttons)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        layout.addWidget(self.progress)
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(3000)
+        self.log.setMinimumHeight(140)
+        layout.addWidget(self.log, 1)
+
+        # 5. Result: pick a checkpoint if the final one sounds over-trained
+        self.result_widget = QWidget()
+        result = QVBoxLayout(self.result_widget)
+        result.setContentsMargins(0, 0, 0, 0)
+        self.result_label = QLabel("")
+        self.result_label.setWordWrap(True)
+        result.addWidget(self.result_label)
+        checkpoint_row = QHBoxLayout()
+        checkpoint_row.addWidget(QLabel("Active checkpoint:"))
+        self.checkpoint_combo = QComboBox()
+        checkpoint_row.addWidget(self.checkpoint_combo, 1)
+        use_button = QPushButton("Use this checkpoint")
+        use_button.clicked.connect(lambda: self.voice_dir and self.use_checkpoint_requested.emit(
+            self.voice_dir, self.checkpoint_combo.currentData()))
+        checkpoint_row.addWidget(use_button)
+        result.addLayout(checkpoint_row)
+        self.result_widget.setVisible(False)
+        layout.addWidget(self.result_widget)
+        self.resize(640, 640)
+
+    def _spin(self, minimum, maximum):
+        spin = QSpinBox()
+        spin.setRange(minimum, maximum)
+        return spin
+
+    def _toggle_advanced(self, checked):
+        self.advanced_widget.setVisible(checked)
+        self.advanced_toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+
+    def _choose_dataset(self, folder):
+        if folder:
+            path = QFileDialog.getExistingDirectory(self, "Choose the folder with the recordings")
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "Choose a recording", "",
+                                                  "Audio Files (*.wav *.mp3 *.flac *.ogg);;All Files (*)")
+        if path:
+            self.dataset_edit.setText(path)
+            self.summary = None
+            self.settings_label.setText("Measuring the recordings...")
+            self.dataset_selected.emit(path)
+
+    # --- updates from the controller ---
+    def set_applio_status(self, applio_path, problems):
+        self.applio_ready = not problems
+        self.applio_path = applio_path
+        if problems:
+            self.applio_label.setText(" ".join(problems) + " Run install_applio.bat once (about 6 GB), "
+                                      "or choose the folder of an Applio you already have.")
+            self.applio_label.setStyleSheet("color: #b45309;")
+        else:
+            self.applio_label.setText(f"Applio: {applio_path}")
+            self.applio_label.setStyleSheet("")
+        self._refresh()
+
+    def set_gpu(self, gpu):
+        self.gpu = gpu
+        self._recommend()
+
+    def set_dataset_summary(self, summary):
+        self.summary = summary
+        self._recommend()
+
+    def _recommend(self):
+        if self.summary is None:
+            return
+        vram = self.gpu["vram_gb"] if self.gpu else None
+        settings = rvc_training.recommend_settings(self.summary["minutes"], vram, self.noise_checkbox.isChecked())
+        self.epochs_spin.setValue(settings["total_epoch"])
+        self.batch_spin.setValue(settings["batch_size"])
+        self.save_every_spin.setValue(settings["save_every_epoch"])
+        gpu_text = f"{self.gpu['name']} ({self.gpu['vram_gb']:.0f} GB)" if self.gpu else "no NVIDIA GPU found"
+        self.settings_label.setText(
+            f"{self.summary['minutes']:.1f} minutes in {self.summary['files']} file(s). GPU: {gpu_text}.\n"
+            f"Recommended: {settings['total_epoch']} epochs, batch size {settings['batch_size']}, "
+            f"a checkpoint every {settings['save_every_epoch']} epochs so you can compare a few.")
+        warnings = list(settings["warnings"])
+        if self.summary["ignored_formats"]:
+            warnings.append(f"{len(self.summary['ignored_formats'])} file(s) in other formats (such as .m4a) will be "
+                            "skipped; convert them to wav to include them.")
+        if self.summary["unreadable"]:
+            warnings.append(f"{len(self.summary['unreadable'])} file(s) could not be read and will be skipped.")
+        self.warning_label.setText("\n".join(warnings))
+        self.recommended_can_train = settings["can_train"]
+        self._refresh()
+
+    def _refresh(self):
+        name = self.name_edit.text().strip()
+        ready = (self.applio_ready and self.summary is not None and getattr(self, "recommended_can_train", False)
+                 and rvc_training.validate_voice_name(name) is None)
+        training = self.cancel_button.isEnabled()
+        self.start_button.setEnabled(ready and not training)
+        valid_name = bool(name) and rvc_training.validate_voice_name(name) is None
+        self.resume_button.setVisible(self.applio_ready and valid_name and rvc_training.can_resume(self.applio_path, name))
+        self.resume_button.setEnabled(self.applio_ready and not training and self.summary is not None)
+        if name and rvc_training.validate_voice_name(name):
+            self.status_label.setText(f"Voice name: {rvc_training.validate_voice_name(name)}")
+        elif not training and self.status_label.text().startswith("Voice name:"):
+            self.status_label.setText("")
+
+    def current_settings(self):
+        vram = self.gpu["vram_gb"] if self.gpu else None
+        settings = rvc_training.recommend_settings(self.summary["minutes"] if self.summary else 0, vram,
+                                                   self.noise_checkbox.isChecked())
+        settings.update(total_epoch=self.epochs_spin.value(), batch_size=self.batch_spin.value(),
+                        save_every_epoch=self.save_every_spin.value())
+        return settings
+
+    def _start(self, resume):
+        self.start_requested.emit(self.name_edit.text().strip(), self.dataset_edit.text(), self.current_settings(), resume)
+
+    def set_training(self, training):
+        self.cancel_button.setEnabled(training)
+        for widget in (self.name_edit, self.noise_checkbox, self.advanced_widget):
+            widget.setEnabled(not training)
+        if training:
+            self.log.clear()
+            self.progress.setValue(0)
+            self.result_widget.setVisible(False)
+        self._refresh()
+
+    def append_log(self, line):
+        self.log.appendPlainText(line)
+
+    def set_progress(self, percent, text):
+        if percent is not None:
+            self.progress.setValue(percent)
+        if text:
+            self.status_label.setText(text)
+
+    def show_done(self, voice_dir, checkpoints, active):
+        self.voice_dir = voice_dir
+        self.status_label.setText("Training finished.")
+        self.result_label.setText(
+            f"The voice is ready: choose \"{os.path.basename(voice_dir)}\" as the RVC Voice Model and use Preview voice. "
+            "If it sounds harsh or metallic, an earlier checkpoint is often better.")
+        self.checkpoint_combo.clear()
+        for name in checkpoints:
+            self.checkpoint_combo.addItem(f"Epoch {rvc_training.checkpoint_epoch(name)}", name)
+        self.checkpoint_combo.setCurrentIndex(max(0, self.checkpoint_combo.findData(active)))
+        self.result_widget.setVisible(True)
+
+
 class AudiobookMakerView(QMainWindow):
 
     # Define signals for user actions (alphabetical order)
     audio_finished_signal = Signal()
     check_audio_quality_requested = Signal()
     preview_voice_requested = Signal()
+    train_rvc_requested = Signal()
     chunk_settings_changed = Signal(dict)
     clear_regen_requested = Signal()
     continue_audiobook_generation_requested = Signal()
@@ -965,6 +1226,8 @@ class AudiobookMakerView(QMainWindow):
         self.toggle_delete_action.triggered.connect(self.on_toggle_delete_action_triggered)
         self.upload_voices_action = QAction("Upload Models/Voices", self)
         self.upload_voices_action.triggered.connect(self.on_upload_voice_triggered)
+        self.train_rvc_action = QAction("Train RVC Voice", self)
+        self.train_rvc_action.triggered.connect(self.train_rvc_requested.emit)
         self.check_audio_quality_action = QAction("Check Audio with Whisper", self)
         self.check_audio_quality_action.triggered.connect(self.check_audio_quality_requested.emit)
         self.chunk_settings_action = QAction("Text Chunking Settings", self)
@@ -1126,6 +1389,7 @@ class AudiobookMakerView(QMainWindow):
         self.tools_menu.addAction(self.word_replacer_action)
         self.tools_menu.addAction(self.chunk_settings_action)
         self.tools_menu.addAction(self.check_audio_quality_action)
+        self.tools_menu.addAction(self.train_rvc_action)
 
         ### Object/widget dependent "sets"
         delegate = MultiLineDelegate(self.tableWidget)
@@ -2090,6 +2354,31 @@ class AudiobookMakerView(QMainWindow):
     def set_tts_engines(self, engines):
         self.tts_engine_combo.clear()
         self.tts_engine_combo.addItems(engines)
+    def closeEvent(self, event):
+        # The controller sets close_guard while something must not be interrupted (RVC training)
+        guard = getattr(self, "close_guard", None)
+        if guard is not None and not guard():
+            event.ignore()
+            return
+        event.accept()
+    def refresh_s2s_voice_list(self, select=None):
+        """Re-reads the RVC voice folders, e.g. after training a new voice."""
+        widget = getattr(self, "selected_voice_widget", None)
+        engine_config = next((e for e in self.s2s_config.get('s2s_engines', []) if e['name'] == self.get_s2s_engine()), None)
+        param = next((p for p in (engine_config or {}).get('parameters', []) if p['attribute'] == 'selected_voice'), None)
+        if widget is None or param is None:
+            return
+        try:
+            current = widget.currentText()
+        except RuntimeError:
+            return
+        widget.blockSignals(True)
+        widget.clear()
+        widget.addItems(self.get_combobox_items(param))
+        widget.blockSignals(False)
+        target = select if select and widget.findText(select) >= 0 else current
+        if widget.findText(target) >= 0:
+            widget.setCurrentIndex(widget.findText(target))
     def set_sentence_tooltip(self, row, text):
         # Blocked like set_row_speaker_color: itemChanged would otherwise be treated as a sentence edit
         self.tableWidget.blockSignals(True)

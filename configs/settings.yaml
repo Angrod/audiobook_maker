@@ -1,3 +1,4 @@
+applio_path: modules/Applio
 auto_download_gpt_sovits: true
 background_image: null
 chunk_join_wrapped_lines: false

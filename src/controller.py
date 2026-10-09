@@ -29,7 +29,8 @@ except:
     pass
 
 from model import AudiobookModel
-from view import AudiobookMakerView, RVCPreviewDialog
+from view import AudiobookMakerView, RVCPreviewDialog, RVCTrainDialog
+import rvc_training
 import voice_tools
 
 
@@ -122,6 +123,42 @@ class RegenerateAudioWorker(QThread):
 
         self.finished_signal.emit(self.new_audio_path, self.speaker_id)
 
+class RVCTrainWorker(QThread):
+    line_signal = Signal(str)
+    progress_signal = Signal(object, str)  # percent (or None), status text
+    done_signal = Signal(str)  # installed voice folder
+    cancelled_signal = Signal()
+    error_signal = Signal(str)
+
+    def __init__(self, applio_path, name, dataset_path, settings, resume):
+        super().__init__()
+        self.applio_path, self.name, self.dataset_path = applio_path, name, dataset_path
+        self.settings, self.resume = settings, resume
+        self._stop_requested = False
+        self._process = None
+
+    def run(self):
+        try:
+            voice_dir = rvc_training.train_voice(
+                self.applio_path, self.name, self.dataset_path, self.settings, self.line_signal.emit,
+                self.progress_signal.emit, lambda: self._stop_requested, resume=self.resume,
+                on_process=self._set_process)
+            self.done_signal.emit(voice_dir)
+        except rvc_training.TrainingCancelled:
+            self.cancelled_signal.emit()
+        except Exception as e:
+            traceback.print_exc()
+            self.error_signal.emit(str(e) or e.__class__.__name__)
+
+    def _set_process(self, process):
+        self._process = process
+
+    def stop(self):
+        """Stops at once: kills the running Applio step instead of waiting for its next output line."""
+        self._stop_requested = True
+        if self._process is not None:
+            rvc_training.kill_process_tree(self._process)
+
 class TaskWorker(QThread):
     """Runs one function off the GUI thread and reports its return value or error."""
     result_signal = Signal(object)
@@ -198,6 +235,9 @@ class AudiobookController:
         self.is_generating = False
         self.preview_dialog = None
         self.preview_result = None
+        self.rvc_train_dialog = None
+        self.rvc_train_worker = None
+        self.gpu_info = None
 
         
         self.debug = self.global_settings.get('debug_mode', False)  # Set this to True to enable debugging mode
@@ -250,8 +290,8 @@ class AudiobookController:
         if not self.current_audiobook_directory:
             self.popup_load_audiobook()
             return
-        if self.is_generating:
-            self.view.show_message("Busy", "Wait for generation to finish (or stop it) before checking audio.", icon=QMessageBox.Warning)
+        if self.is_generating or self.is_training_rvc():
+            self.view.show_message("Busy", "Wait for generation or RVC training to finish before checking audio.", icon=QMessageBox.Warning)
             return
         model_size = self.global_settings.get('qa_whisper_model', 'small')
         proceed = self.view.ask_question(
@@ -284,6 +324,108 @@ class AudiobookController:
         self.view.show_message("Audio Check Complete", message, icon=QMessageBox.Information)
     def on_audio_quality_error(self, error_message):
         self.view.show_message("Audio Check Failed", error_message, icon=QMessageBox.Warning)
+    def is_training_rvc(self):
+        return self.rvc_train_worker is not None and self.rvc_train_worker.isRunning()
+    def confirm_close(self):
+        if not self.is_training_rvc():
+            return True
+        if not self.view.ask_question("Training in Progress",
+                                      "An RVC voice is still training. Stop training and quit?\n\n"
+                                      "You can resume it later from Tools > Train RVC Voice.",
+                                      default_button=QMessageBox.No):
+            return False
+        self.rvc_train_worker.stop()
+        self.rvc_train_worker.wait(20000)
+        return True
+    def applio_path(self):
+        return self.global_settings.get('applio_path') or rvc_training.DEFAULT_APPLIO_PATH
+    def open_rvc_trainer(self):
+        if self.rvc_train_dialog is None:
+            dialog = RVCTrainDialog(self.view)
+            dialog.choose_applio_requested.connect(self.choose_applio_folder)
+            dialog.dataset_selected.connect(self.measure_rvc_dataset)
+            dialog.start_requested.connect(self.start_rvc_training)
+            dialog.cancel_requested.connect(self.cancel_rvc_training)
+            dialog.use_checkpoint_requested.connect(self.use_rvc_checkpoint)
+            self.rvc_train_dialog = dialog
+            if self.gpu_info is None:
+                self.gpu_info = rvc_training.detect_gpu() or {}
+            dialog.set_gpu(self.gpu_info or None)
+        path = self.applio_path()
+        self.rvc_train_dialog.set_applio_status(path, rvc_training.applio_problems(path))
+        self.rvc_train_dialog.show()
+        self.rvc_train_dialog.raise_()
+        self.rvc_train_dialog.activateWindow()
+    def choose_applio_folder(self):
+        folder = self.view.get_existing_directory("Choose your Applio folder (the one with core.py)")
+        if not folder:
+            return
+        self.model.save_settings({'applio_path': folder})
+        self.rvc_train_dialog.set_applio_status(folder, rvc_training.applio_problems(folder))
+    def measure_rvc_dataset(self, path):
+        self.dataset_worker = TaskWorker(rvc_training.dataset_summary, path)
+        self.dataset_worker.result_signal.connect(self.rvc_train_dialog.set_dataset_summary)
+        self.dataset_worker.error_signal.connect(
+            lambda error: self.rvc_train_dialog.settings_label.setText(f"Could not read the recordings: {error}"))
+        self.dataset_worker.start()
+    def start_rvc_training(self, name, dataset_path, settings, resume):
+        if self.is_generating:
+            self.view.show_message("Busy", "Wait for audiobook generation to finish before training; both need the GPU.",
+                                   icon=QMessageBox.Warning)
+            return
+        if self.is_training_rvc():
+            return
+        applio = self.applio_path()
+        if not resume and rvc_training.can_resume(applio, name):
+            if not self.view.ask_question("Previous Training Run",
+                                          f"A training run named \"{name}\" already exists. Starting over deletes it.\n\n"
+                                          "Choose No and use \"Resume previous run\" to continue it instead. Start over?",
+                                          default_button=QMessageBox.No):
+                return
+        voice_dir = os.path.join(rvc_training.RVC_VOICES_DIR, name)
+        if not resume and os.path.isdir(voice_dir):
+            if not self.view.ask_question("Voice Exists",
+                                          f"An RVC voice named \"{name}\" already exists. Replace it when training finishes?",
+                                          default_button=QMessageBox.No):
+                return
+        worker = RVCTrainWorker(applio, name, dataset_path, settings, resume)
+        worker.line_signal.connect(self.rvc_train_dialog.append_log)
+        worker.progress_signal.connect(self.rvc_train_dialog.set_progress)
+        worker.done_signal.connect(self.on_rvc_training_done)
+        worker.cancelled_signal.connect(lambda: self.rvc_train_dialog.set_progress(
+            None, "Training cancelled. Use \"Resume previous run\" to continue from the last saved checkpoint."))
+        worker.error_signal.connect(lambda error: self.rvc_train_dialog.set_progress(None, f"Training failed: {error}"))
+        worker.finished.connect(self.on_rvc_training_finished)
+        self.rvc_train_worker = worker
+        self.rvc_train_dialog.set_training(True)
+        self.view.disable_buttons()
+        worker.start()
+    def cancel_rvc_training(self):
+        if self.is_training_rvc():
+            self.rvc_train_dialog.set_progress(None, "Stopping...")
+            self.rvc_train_worker.stop()
+    def on_rvc_training_finished(self):
+        self.rvc_train_dialog.set_training(False)
+        self.view.enable_buttons()
+    def on_rvc_training_done(self, voice_dir):
+        self.forget_loaded_rvc_voice()
+        name = os.path.basename(voice_dir)
+        self.view.refresh_s2s_voice_list()
+        info = voice_tools.load_voice_info(voice_dir)
+        self.rvc_train_dialog.show_done(voice_dir, rvc_training.list_checkpoints(voice_dir), info.get("active_checkpoint"))
+    def use_rvc_checkpoint(self, voice_dir, checkpoint):
+        try:
+            rvc_training.use_checkpoint(voice_dir, checkpoint)
+        except Exception as e:
+            self.view.show_message("Error", f"Could not switch checkpoint: {e}", icon=QMessageBox.Warning)
+            return
+        self.forget_loaded_rvc_voice()
+        self.rvc_train_dialog.set_progress(None, f"Now using epoch {rvc_training.checkpoint_epoch(checkpoint)}. "
+                                                 "Generate a preview to hear it.")
+    def forget_loaded_rvc_voice(self):
+        """The voice's .pth changed on disk under the same name, so the cached RVC model must reload."""
+        self.model.current_s2s_engine_name = None
+        self.model.current_s2s_parameters = None
     def open_voice_preview(self):
         voice = self.view.get_s2s_engine_parameters().get('selected_voice')
         if not voice:
@@ -305,6 +447,9 @@ class AudiobookController:
         self.preview_result = None
         dialog.show()
     def generate_voice_preview(self, sentence):
+        if self.is_training_rvc():
+            self.preview_dialog.show_error("wait for RVC training to finish; it is using the GPU.")
+            return
         if self.is_generating:
             self.preview_dialog.show_error("wait for audiobook generation to finish first.")
             return
@@ -393,6 +538,8 @@ class AudiobookController:
         # Connect view signals to controller methods
         self.view.check_audio_quality_requested.connect(self.check_audio_quality)
         self.view.preview_voice_requested.connect(self.open_voice_preview)
+        self.view.train_rvc_requested.connect(self.open_rvc_trainer)
+        self.view.close_guard = self.confirm_close
         self.view.chunk_settings_changed.connect(self.save_chunk_settings)
         self.view.clear_regen_requested.connect(self.clear_regen_checkboxes)
         self.view.continue_audiobook_generation_requested.connect(self.continue_audiobook_generation)
