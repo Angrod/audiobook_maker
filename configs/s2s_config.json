@@ -43,24 +43,18 @@
             "none_option_label": "Default"
           },
           {
-            "label": "Pitch Method",
-            "attribute": "f0method",
-            "type": "combobox",
-            "function": "get_combobox_items",
-            "look_for": "custom",
-            "custom_options": ["rmvpe", "harvest", "crepe"]
+            "label": "Sound",
+            "attribute": "rvc_preset",
+            "type": "preset",
+            "options": {
+              "Natural narration (recommended)": {"f0method": "rmvpe", "index_rate": 50, "protect": 33, "filter_radius": 3, "rms_mix_rate": 25, "resample_sr": "0:None"},
+              "Closer to target voice": {"f0method": "rmvpe", "index_rate": 75, "protect": 40, "filter_radius": 3, "rms_mix_rate": 25, "resample_sr": "0:None"},
+              "Fewer artifacts": {"f0method": "rmvpe", "index_rate": 30, "protect": 25, "filter_radius": 5, "rms_mix_rate": 50, "resample_sr": "0:None"},
+              "Custom": {}
+            }
           },
           {
-            "label": "Index Effect",
-            "attribute": "index_rate",
-            "type": "slider",
-            "min": 0,
-            "max": 100,
-            "default": 0,
-            "step":100
-          },
-          {
-            "label": "Voice Pitch",
+            "label": "Voice Pitch (semitones)",
             "attribute": "f0pitch",
             "type": "slider",
             "min": -16,
@@ -68,25 +62,47 @@
             "default": 0
           },
           {
+            "label": "Pitch Method",
+            "attribute": "f0method",
+            "advanced": true,
+            "type": "combobox",
+            "function": "get_combobox_items",
+            "look_for": "custom",
+            "custom_options": ["rmvpe", "harvest", "crepe"]
+          },
+          {
+            "label": "Index Effect (likeness to the trained voice)",
+            "attribute": "index_rate",
+            "advanced": true,
+            "type": "slider",
+            "min": 0,
+            "max": 100,
+            "default": 50,
+            "step":100
+          },
+          {
             "label": "Resample Sample Rate (Hz)",
             "attribute": "resample_sr",
+            "advanced": true,
             "type": "combobox",
             "function": "get_combobox_items",
             "look_for": "custom",
             "custom_options": ["0:None", "40000:v1 Models", "48000:v2 Models"]
           },
           {
-            "label": "Volume Increase",
+            "label": "Volume Envelope (0 = follow the TTS loudness)",
             "attribute": "rms_mix_rate",
+            "advanced": true,
             "type": "slider",
             "min": 0,
             "max": 100,
-            "default": 50,
+            "default": 25,
             "step": 100
           },
           {
             "label": "Protection for Voiceless Consonants",
             "attribute": "protect",
+            "advanced": true,
             "type": "slider",
             "min": 0,
             "max": 50,
@@ -96,6 +112,7 @@
           {
             "label": "Filter Radius",
             "attribute": "filter_radius",
+            "advanced": true,
             "type": "slider",
             "min": 0,
             "max": 7,

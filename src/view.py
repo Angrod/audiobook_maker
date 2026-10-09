@@ -5,7 +5,8 @@ from PySide6.QtWidgets import (
     QSlider, QWidgetAction, QComboBox, QApplication, QMainWindow, QPushButton,
     QVBoxLayout, QLineEdit, QLabel, QWidget, QMessageBox, QCheckBox,
     QHeaderView, QProgressBar, QGridLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QFileDialog, QScrollArea,
-    QSizePolicy, QSpinBox, QSplitter, QDialog, QListWidget, QListWidgetItem, QColorDialog, QMenu, QAbstractItemView, QStyledItemDelegate, QPlainTextEdit
+    QSizePolicy, QSpinBox, QSplitter, QDialog, QListWidget, QListWidgetItem, QColorDialog, QMenu, QAbstractItemView, QStyledItemDelegate, QPlainTextEdit,
+    QToolButton
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtCore import Signal, Qt, QUrl, QSize
@@ -636,6 +637,18 @@ class WordReplacerView(QMainWindow):
             self.speakers_combo.addItem(f"{speaker['name']}", userData=speaker_id)
         self.speakers_combo.blockSignals(False)
         
+def find_matching_preset(options, settings):
+    """Name of the first preset whose values all match settings, else the catch-all (empty) preset."""
+    catch_all = None
+    for name, values in options.items():
+        if not values:
+            catch_all = catch_all or name
+            continue
+        if all(str(settings.get(key)) == str(value) for key, value in values.items()):
+            return name
+    return catch_all
+
+
 class ChunkSettingsDialog(QDialog):
     def __init__(self, parent=None, chunk_settings=None):
         super().__init__(parent)
@@ -777,6 +790,9 @@ class AudiobookMakerView(QMainWindow):
 
         self.tts_config = self.load_tts_config('configs/tts_config.json')
         self.s2s_config = self.load_s2s_config('configs/s2s_config.json')
+        self.preset_params = {}  # attribute -> preset parameter config, for every preset widget built
+        self.applying_preset = False
+        self.s2s_advanced_open = False
         self.speakers = {
                 1: {'name': 'Narrator', 'color': Qt.black, 'settings': {}}
             }
@@ -1242,6 +1258,13 @@ class AudiobookMakerView(QMainWindow):
                     self.show_message("Error", f"Unknown function {function_name} for combobox parameter", QMessageBox.Warning)
             widget.currentTextChanged.connect(lambda text, attr=attribute: self.on_parameter_changed(attr, text))
             layout.addWidget(widget)
+        elif param_type == 'preset':
+            # A preset sets several other parameters at once; it shows "Custom" when they no longer match
+            widget = QComboBox()
+            widget.addItems(list(param.get('options', {}).keys()))
+            self.preset_params[attribute] = param
+            widget.currentTextChanged.connect(lambda text, p=param: self.apply_preset(p, text))
+            layout.addWidget(widget)
         elif param_type == 'slider':
             # Create the slider
             widget = QSlider(Qt.Horizontal)
@@ -1481,7 +1504,7 @@ class AudiobookMakerView(QMainWindow):
                     parameters[attribute] = widget.value()
                 elif param['type'] == 'checkbox':
                     parameters[attribute] = widget.isChecked()
-                elif param['type'] == 'combobox':
+                elif param['type'] in ('combobox', 'preset'):
                     parameters[attribute] = widget.currentText()
                 elif param['type'] == 'slider':
                     parameters[attribute] = widget.value()
@@ -1505,7 +1528,7 @@ class AudiobookMakerView(QMainWindow):
                     parameters[attribute] = widget.value()
                 elif param['type'] == 'checkbox':
                     parameters[attribute] = widget.isChecked()
-                elif param['type'] == 'combobox':
+                elif param['type'] in ('combobox', 'preset'):
                     parameters[attribute] = widget.currentText()
                 elif param['type'] == 'slider':
                     parameters[attribute] = widget.value()
@@ -1694,7 +1717,73 @@ class AudiobookMakerView(QMainWindow):
         if value == 'Default':
             value = None
         self.update_current_speaker_setting(attribute, value)
+        if not self.applying_preset:
+            self.sync_presets()
         self.generation_settings_changed.emit()
+    def apply_preset(self, param, preset_name):
+        """Sets the widgets a preset controls; their own change handlers save the values per speaker."""
+        values = param.get('options', {}).get(preset_name, {})
+        self.applying_preset = True
+        try:
+            for attribute, value in values.items():
+                self.set_widget_value(getattr(self, f"{attribute}_widget", None), value)
+        finally:
+            self.applying_preset = False
+        self.update_current_speaker_setting(param['attribute'], preset_name)
+        self.generation_settings_changed.emit()
+    def sync_presets(self, settings=None):
+        """Shows the preset that matches the current values (or Custom) without applying anything."""
+        if settings is None:
+            current_speaker_id, _ = self.get_current_speaker_attributes()
+            settings = self.speakers.get(current_speaker_id, {}).get('settings', {})
+        for attribute, param in list(self.preset_params.items()):
+            widget = getattr(self, f"{attribute}_widget", None)
+            if widget is None:
+                continue
+            try:
+                widget.currentText()
+            except RuntimeError:  # the options panel was rebuilt and this widget deleted
+                del self.preset_params[attribute]
+                continue
+            # Compare what the widgets show: settings lack values the user never touched
+            current = {}
+            for values in param.get('options', {}).values():
+                for key in values:
+                    controlled = getattr(self, f"{key}_widget", None)
+                    current[key] = self.get_widget_value(controlled) if controlled is not None else settings.get(key)
+            name = find_matching_preset(param.get('options', {}), current)
+            if name is not None and widget.currentText() != name:
+                widget.blockSignals(True)
+                widget.setCurrentIndex(widget.findText(name))
+                widget.blockSignals(False)
+            if name is not None:
+                settings[attribute] = name
+    def get_widget_value(self, widget):
+        try:
+            if isinstance(widget, QComboBox):
+                return widget.currentText()
+            if isinstance(widget, (QSlider, QSpinBox)):
+                return widget.value()
+            if isinstance(widget, QCheckBox):
+                return widget.isChecked()
+            if isinstance(widget, QLineEdit):
+                return widget.text()
+        except RuntimeError:  # deleted with a rebuilt options panel
+            return None
+        return None
+    def set_widget_value(self, widget, value):
+        if widget is None:
+            return
+        if isinstance(widget, QComboBox):
+            index = widget.findText(str(value))
+            if index >= 0:
+                widget.setCurrentIndex(index)
+        elif isinstance(widget, (QSlider, QSpinBox)):
+            widget.setValue(int(value))
+        elif isinstance(widget, QCheckBox):
+            widget.setChecked(bool(value))
+        elif isinstance(widget, QLineEdit):
+            widget.setText(str(value))
     def on_pause_button_clicked(self):
         self.pause_audio_requested.emit()
     def on_play_all_button_clicked(self):
@@ -1842,7 +1931,7 @@ class AudiobookMakerView(QMainWindow):
             for param in engine_config.get('parameters', []):
                 attribute = param['attribute']
                 widget = getattr(self, f"{attribute}_widget", None)
-                if widget:
+                if widget and param['type'] != 'preset':
                     value = settings.get(attribute, None)
                     if value is not None:
                         if param['type'] in ('text', 'file'):
@@ -1862,6 +1951,8 @@ class AudiobookMakerView(QMainWindow):
                     else:
                         if param['type'] == 'combobox':
                             widget.setCurrentIndex(0)
+            self.sync_presets(settings)
+
     def set_start_generation_button_text(self, text):
         self.start_generation_button.setText(text)
     def set_tts_initial_index(self):
@@ -1877,7 +1968,7 @@ class AudiobookMakerView(QMainWindow):
             for param in engine_config.get('parameters', []):
                 attribute = param['attribute']
                 widget = getattr(self, f"{attribute}_widget", None)
-                if widget:
+                if widget and param['type'] != 'preset':
                     value = settings.get(attribute, None)
                     if value is not None:
                         if param['type'] in ('text', 'file'):
@@ -1897,6 +1988,8 @@ class AudiobookMakerView(QMainWindow):
                     else:
                         if param['type'] == 'combobox':
                             widget.setCurrentIndex(0)  # Default to first item when value is None
+            self.sync_presets(settings)
+
     def set_tts_engines(self, engines):
         self.tts_engine_combo.clear()
         self.tts_engine_combo.addItems(engines)
@@ -2020,13 +2113,41 @@ class AudiobookMakerView(QMainWindow):
         engine_label.setStyleSheet("font-size: 16pt; font-weight: bold;")
         self.s2s_options_layout.addWidget(engine_label)
 
-        # Iterate over parameters and create widgets
-        for param in engine_config.get('parameters', []):
+        # Everyday settings first; the rest go in a collapsible "Advanced settings" section
+        params = engine_config.get('parameters', [])
+        for param in [p for p in params if not p.get('advanced')]:
             widget_layout = self.create_widget_for_parameter(param)
             if widget_layout:
                 self.s2s_options_layout.addLayout(widget_layout)
 
+        advanced_params = [p for p in params if p.get('advanced')]
+        if advanced_params:
+            toggle = QToolButton()
+            toggle.setText("Advanced settings")
+            toggle.setCheckable(True)
+            toggle.setChecked(self.s2s_advanced_open)
+            toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            toggle.setArrowType(Qt.DownArrow if self.s2s_advanced_open else Qt.RightArrow)
+            container = QWidget()
+            container_layout = QVBoxLayout(container)
+            container_layout.setContentsMargins(0, 0, 0, 0)
+            for param in advanced_params:
+                widget_layout = self.create_widget_for_parameter(param)
+                if widget_layout:
+                    container_layout.addLayout(widget_layout)
+            container.setVisible(self.s2s_advanced_open)
+
+            def on_toggled(checked, toggle=toggle, container=container):
+                self.s2s_advanced_open = checked
+                container.setVisible(checked)
+                toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+            toggle.toggled.connect(on_toggled)
+            self.s2s_advanced_toggle = toggle
+            self.s2s_options_layout.addWidget(toggle)
+            self.s2s_options_layout.addWidget(container)
+
         self.s2s_options_layout.addStretch()
+        self.sync_presets()
         self.s2s_options_widget.setVisible(True)
     def update_tts_options(self, engine_name):
         if not engine_name:
