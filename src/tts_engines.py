@@ -207,17 +207,34 @@ def generate_with_gpt_sovits(tts_engine, sentence, voice_parameters, audio_path)
     
     sample_steps = voice_parameters.get("gpt_sovits_sample_steps")
     
+    # .get defaults keep audiobooks whose speaker settings predate these options working
+    speed_steps = next((param.step for param in gpt_sovits_engine_config.parameters if param.attribute=="gpt_sovits_speed"), 100)
+    speed_factor = round(voice_parameters.get("gpt_sovits_speed", 100) / speed_steps, 2)
+    
+    repetition_penalty_steps = next((param.step for param in gpt_sovits_engine_config.parameters if param.attribute=="gpt_sovits_repetition_penalty"), 100)
+    repetition_penalty = round(voice_parameters.get("gpt_sovits_repetition_penalty", 135) / repetition_penalty_steps, 2)
+    
+    text_split_method = voice_parameters.get("gpt_sovits_text_split_method") or "cut0"
+    
+    aux_ref_audio_paths = []
+    if voice_parameters.get("gpt_sovits_use_aux_refs", False):
+        aux_ref_audio_paths = find_aux_reference_audio(os.path.join(voice_root_path, voice_name), voice_ref_audio_path)
+    
     inputs = {
         "text": sentence,
         "text_lang" : voice_parameters.get("gpt_sovits_output_lang"),
         "ref_audio_path": voice_ref_audio_path,
+        "aux_ref_audio_paths": aux_ref_audio_paths,
         "prompt_text": voice_ref_text_transcript,
         "prompt_lang" : voice_parameters.get("gpt_sovits_ref_lang"),
         "seed": voice_parameters.get("gpt_sovits_seed"),
         "top_k" : top_k,
         "top_p" : top_p,
         "temperature" : temperature,
-        "sample_steps" : sample_steps
+        "sample_steps" : sample_steps,
+        "speed_factor": speed_factor,
+        "repetition_penalty": repetition_penalty,
+        "text_split_method": text_split_method
     }
     
     gen = tts_engine.run(inputs)
@@ -419,6 +436,18 @@ def load_with_gpt_sovits(**kwargs):
 #################################################
 ############### Utility Functions ###############
 #################################################
+
+def find_aux_reference_audio(voice_folder, main_ref_audio_path):
+    '''Other .wav files in a voice folder, used by GPT-SoVITS v1/v2 to blend the timbre of several clips.'''
+    if not os.path.isdir(voice_folder):
+        return []
+    main_ref = os.path.normcase(os.path.abspath(main_ref_audio_path))
+    aux_paths = []
+    for file_name in sorted(os.listdir(voice_folder)):
+        path = os.path.join(voice_folder, file_name)
+        if file_name.lower().endswith(".wav") and os.path.normcase(os.path.abspath(path)) != main_ref:
+            aux_paths.append(path)
+    return aux_paths
 
 def find_engine_config(engine_name, tts_settings):
     for engine in tts_settings.tts_engines:
