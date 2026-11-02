@@ -45,12 +45,36 @@ Settings are in `configs/settings.yaml`; see the table in the [README](README.md
 - [ ] Upload the new models in the app and pick v2ProPlus under "Version to Use"
 - [ ] Generate the same chapter with the old voice and the new one, and compare
 
-### 5. Later (roughly in order of payoff)
-- [ ] **Commit the automation pipeline.** The README mentions it, but it isn't in the repo yet
+### 5. Later (in order of payoff)
+Ideas partly drawn from [VoiceStudio](https://github.com/debpalash/VoiceStudio). It is AGPL-3.0, so write our own versions; don't copy its code into this MIT fork.
+
+- [ ] **Natural pacing between sentences** (biggest audible gain for the effort)
+  - [ ] Trim each clip's leading/trailing silence before joining, so engine padding doesn't make gaps uneven
+  - [ ] Different gaps by position: sentence (~0.3 s), paragraph end (~0.8 s), after a chapter title (~2 s)
+  - [ ] `[pause 1s]` markup in the text for dramatic beats ([JarodMica/audiobook_maker#84](https://github.com/JarodMica/audiobook_maker/issues/84))
+- [ ] **Chapter structure** (needed by EPUB import and m4b chapters)
+  - [ ] Recognise heading lines when loading text (`# Title`, `Chapter 12`, `Prologue`, ...)
+  - [ ] Store each sentence's chapter in `text_audio_map.json` and show chapter rows in the table
+  - [ ] Read headings as their own chunk, followed by the longer pause
+- [ ] **EPUB/PDF import** (top of `bugs_and_feature_tracker.md`)
+  - [ ] Chapter titles from the book's table of contents
+  - [ ] Skip cover, contents, dedication and copyright pages
+  - [ ] PDF: strip page numbers and running headers
+  - [ ] Review step to check chapters before loading
+- [ ] **Chapters in m4b exports**
+  - [ ] Chapter markers from the chapter structure
+  - [ ] Book title, author, narrator and cover image
+  - [ ] `.txt` cue sheet (`HH:MM:SS  Chapter title`) for MP3, which can't hold chapters
 - [ ] **Automatic fix loop.** Check, regenerate and re-check until clean or N attempts
-- [ ] **EPUB/PDF import.** Top of `bugs_and_feature_tracker.md`
-- [ ] **Chapters in m4b exports.** So players can show and skip chapters
-- [ ] **Qwen3-TTS as a second engine.** To compare against GPT-SoVITS on the same text
+- [ ] **Per-book pronunciation list** (grow the Word Replacer into it)
+  - [ ] Names and invented words re-spelled automatically when text is loaded; duplicates flagged
+  - [ ] Whisper check compares against the original spelling, so a name written as "Her-my-oh-nee" isn't flagged when Whisper hears "Hermione"
+- [ ] **Commit the automation pipeline.** The README mentions it, but it isn't in the repo yet
+- [ ] **ACX-ready export** (only if publishing on Audible)
+  - [ ] One MP3 per chapter, 192 kbps CBR, 44.1 kHz
+  - [ ] Room tone: 0.5–1 s at the start of each file, 1–5 s at the end
+  - [ ] Loudness between -23 and -18 dB RMS, peaks under -3 dB; report any file that doesn't meet it
+- [ ] **Pick one newer engine.** Listen to the online demos of Qwen3-TTS, IndexTTS 2.5, MOSS-TTS v1.5 and dots.tts, then integrate only the best one
 - [ ] **GPT-SoVITS v5 port.** Released upstream Oct 6, 2026 and builds on v2Pro; wait a few weeks for upstream fixes
 
 ## Done
